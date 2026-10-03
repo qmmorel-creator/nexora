@@ -2,7 +2,7 @@
 // Sankey et « Budget cumulé par mois » sont ceux de Nexora, repris tels quels
 // (src/nexora/finance-nexora.jsx, généré) : même esthétique, même comportement.
 // Seule écriture : la catégorisation d'une opération, comme dans Nexora.
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { decalerMois, euros, messageFinance, trierSuivi, type ACategoriser, type SerieDePatrimoine, type SyntheseBudget } from "../donnees/finance";
 import { caEncaisseAnnee, euros2, statutDevis, statutFacture, STATUTS_DEVIS, STATUTS_FACTURE, totalDevis } from "../donnees/finance-pro";
 import { ErreurFinance, type RessourceFinance } from "../donnees/source";
@@ -11,6 +11,7 @@ import { bornes, CHOIX_PERIODE, decaler, joursDe, LIB_PERIODE, moisCouverts, syn
 import { nouvelId } from "../donnees/modele";
 import { FINANCE_BUDGET_CHART_CSS, FINANCE_BUDGET_CUMUL_CSS, FINANCE_SANKEY_DEFAULT_CONFIG, FinanceCumulCategories, FinanceSankeyChart, financeCumulModel, financeSankeyBuild, financeSankeyNormalize } from "../nexora/finance-nexora";
 import { dateCourte, MOIS_C, useOptim, useUi } from "./contexte";
+import { ChoixRecherche, ListeCoches } from "./ListeCoches";
 
 const LIB_ONGLET: Record<OngletArgent, string> = { mois: "Période", patrimoine: "Patrimoine", pro: "Pro", operations: "Opérations" };
 
@@ -50,8 +51,8 @@ function Classer({ x, categories, apres }: { x: { id: string; label: string; amo
     finally { setEnCours(false); }
   };
   return <span className="ox-classer">
-    <select value={cat} onChange={(e) => { setCat(e.target.value); setSc(""); }} aria-label="Catégorie"><option value="">Catégorie…</option>{categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select>
-    {sous.length > 0 && <select value={sc} onChange={(e) => setSc(e.target.value)} aria-label="Sous-catégorie"><option value="">Sous-catégorie…</option>{sous.map((s) => <option key={s} value={s}>{s}</option>)}</select>}
+    <ChoixRecherche libelle="Catégorie" vide="Catégorie…" valeur={cat} changer={(v) => { setCat(v); setSc(""); }} options={categories.map((c) => ({ id: c.name, libelle: c.name }))} />
+    {sous.length > 0 && <ChoixRecherche libelle="Sous-catégorie" vide="Sous-catégorie…" valeur={sc} changer={setSc} options={sous.map((x) => ({ id: x, libelle: x }))} />}
     <button type="button" className="hx-btn is-sm" disabled={!pret || enCours} onClick={() => void valider()}>{enCours ? "…" : "Classer"}</button>
   </span>;
 }
@@ -254,13 +255,12 @@ function OngletOperations({ cle, rafraichir }: { cle: number; rafraichir: () => 
   const depenses = liste.filter((o) => o.montant < 0).reduce((s, o) => s - o.montant, 0), revenus = liste.filter((o) => o.montant > 0).reduce((s, o) => s + o.montant, 0);
   const actifs = CHAMPS.filter((c) => (sel[c.cle] || []).length);
   const vide = !q && !du && !au && min === "" && max === "" && !actifs.length;
-  const basculer = useCallback((c: string, v: string) => setSel((x) => { const l = x[c] || []; return { ...x, [c]: l.includes(v) ? l.filter((y) => y !== v) : [...l, v] }; }), []);
   if (!r.data) return <Etat erreur={r.erreur} />;
   return <>
     <div className="hx-fbar">
       <label className="hx-fsearch"><span aria-hidden="true">⌕</span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Libellé, catégorie, compte" aria-label="Rechercher une opération" autoComplete="off" /></label>
       {CHAMPS.map((c) => { const opts = [...new Set(ops.map(c.val))].sort((a, b) => a.localeCompare(b, "fr")), n = (sel[c.cle] || []).length; return <span key={c.cle} className="hx-fchip-w"><button type="button" className={`hx-fchip ${n ? "is-on" : ""}`} aria-expanded={pop === c.cle} onClick={() => setPop(pop === c.cle ? "" : c.cle)}>{c.lib}{n ? <> <b>{n}</b></> : null} ▾</button>
-        {pop === c.cle && <div className="hx-pop is-f" role="dialog" aria-label={c.lib}>{opts.map((v) => <label key={v}><input type="checkbox" checked={(sel[c.cle] || []).includes(v)} onChange={() => basculer(c.cle, v)} />{v} <small className="hx-dim">{ops.filter((o) => c.val(o) === v).length}</small></label>)}<footer><button type="button" className="hx-more" onClick={() => setSel((x) => ({ ...x, [c.cle]: [] }))}>Tout décocher</button></footer></div>}</span>; })}
+        {pop === c.cle && <div className="hx-pop is-f ox-lc-pop" role="dialog" aria-label={c.lib}><ListeCoches options={opts.map((v) => ({ id: v, libelle: v, detail: ops.filter((o) => c.val(o) === v).length }))} choisis={sel[c.cle] || []} changer={(ids) => setSel((x) => ({ ...x, [c.cle]: ids }))} libelleRecherche={`Rechercher : ${c.lib.toLowerCase()}`} /></div>}</span>; })}
       <span className="hx-frange"><label>Du <input type="date" value={du} onChange={(e) => setDu(e.target.value)} /></label><label>au <input type="date" value={au} onChange={(e) => setAu(e.target.value)} /></label></span>
       <span className="hx-frange"><label>Montant ≥ <input type="number" min="0" value={min} onChange={(e) => setMin(e.target.value)} placeholder="0" /> €</label><label>≤ <input type="number" min="0" value={max} onChange={(e) => setMax(e.target.value)} placeholder="∞" /> €</label></span>
       <p className="hx-fsum"><b>{liste.length} opération{liste.length > 1 ? "s" : ""}</b> · {vide ? "aucun filtre" : [...actifs.map((c) => `${c.lib.toLowerCase()} : ${sel[c.cle].join(", ")}`), ...(du || au ? [`du ${du ? dateCourte(du) : "début"} au ${au ? dateCourte(au) : "aujourd'hui"}`] : []), ...(min !== "" || max !== "" ? [`montant ${min !== "" ? "≥ " + min + " €" : ""}${min !== "" && max !== "" ? " et " : ""}${max !== "" ? "≤ " + max + " €" : ""}`] : []), ...(q ? [`« ${q} »`] : [])].join(" · ")} · débits {euros(depenses)} · crédits {euros(revenus)}

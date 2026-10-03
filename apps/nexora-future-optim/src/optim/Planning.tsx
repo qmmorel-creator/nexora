@@ -5,6 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { ajouterJours, type Tache } from "../donnees/modele";
 import { lignesFrise } from "../donnees/planning";
 import { GROUPES_PLANNING, ZOOMS_PLANNING, type GroupePlanning, type StyleGantt, type VueEnregistree, type Zoom } from "../donnees/prefs";
+import { IconeStyle } from "./IconeStyle";
 import { useOptim, useUi } from "./contexte";
 import { BarreFiltres, useFiltrage } from "./filtres";
 import { Grille, graduations, HAUTEUR_RANGEE, infobulle, libellePlage, LigneGantt, plage, ranger, STYLES_DEF, tx, ZOOMS_DEF, type Plage } from "./frise";
@@ -12,7 +13,7 @@ import { Grille, graduations, HAUTEUR_RANGEE, infobulle, libellePlage, LigneGant
 export function SelecteurStyle({ petit }: { petit?: boolean }) {
   const { prefs, ecrirePrefs } = useOptim();
   return <div className="hx-gsel"><span>Représentation</span><div className={`hx-seg ${petit ? "is-xs" : "is-sm"}`}>
-    {STYLES_DEF.map((s) => <button key={s.id} type="button" aria-pressed={prefs.gantt === s.id} title={s.aide} onClick={() => void ecrirePrefs({ gantt: s.id })}>{s.libelle}</button>)}
+    {STYLES_DEF.map((s) => <button key={s.id} type="button" className="ox-btn-ico" aria-pressed={prefs.gantt === s.id} aria-label={s.libelle} title={`${s.libelle} : ${s.aide}`} onClick={() => void ecrirePrefs({ gantt: s.id })}><IconeStyle style={s.id} /></button>)}
   </div></div>;
 }
 export const AideStyle = ({ style }: { style: StyleGantt }) => { const s = STYLES_DEF.find((x) => x.id === style) || STYLES_DEF[0]; return <p className="hx-gdesc"><b>{s.libelle}</b> : {s.aide}</p>; };

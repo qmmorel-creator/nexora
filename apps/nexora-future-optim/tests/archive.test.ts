@@ -8,17 +8,18 @@ const A = [t("a", "Relance fournisseur", "p1", "2026-09-01T10:00:00Z"), t("b", "
 
 describe("Archive (Ref #709)", () => {
   it("trie par archivage décroissant, sans date en dernier", () => {
-    expect(listeArchive(A, { q: "", projet: null }).map((x) => x.id)).toEqual(["b", "d", "a", "c"]);
+    expect(listeArchive(A, { q: "", projets: [] }).map((x) => x.id)).toEqual(["b", "d", "a", "c"]);
   });
   it("recherche par titre sans tenir compte des accents ni de la casse", () => {
-    expect(listeArchive(A, { q: "reunion", projet: null }).map((x) => x.id)).toEqual(["b"]);
-    expect(listeArchive(A, { q: "  RAPPORT ", projet: null }).map((x) => x.id)).toEqual(["d"]);
+    expect(listeArchive(A, { q: "reunion", projets: [] }).map((x) => x.id)).toEqual(["b"]);
+    expect(listeArchive(A, { q: "  RAPPORT ", projets: [] }).map((x) => x.id)).toEqual(["d"]);
   });
-  it("filtre par projet, combinable avec la recherche", () => {
-    expect(listeArchive(A, { q: "", projet: "p1" }).map((x) => x.id)).toEqual(["d", "a", "c"]);
-    expect(listeArchive(A, { q: "devis", projet: "p2" })).toEqual([]);
+  it("filtre par projets (plusieurs possibles), combinable avec la recherche", () => {
+    expect(listeArchive(A, { q: "", projets: ["p1"] }).map((x) => x.id)).toEqual(["d", "a", "c"]);
+    expect(listeArchive(A, { q: "devis", projets: ["p2"] })).toEqual([]);
+    expect(listeArchive(A, { q: "", projets: ["p1", "p2"] }).map((x) => x.id)).toEqual(["b", "d", "a", "c"]);
   });
   it("ne modifie pas la liste reçue", () => {
-    const copie = [...A]; listeArchive(A, { q: "", projet: null }); expect(A).toEqual(copie);
+    const copie = [...A]; listeArchive(A, { q: "", projets: [] }); expect(A).toEqual(copie);
   });
 });

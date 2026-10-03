@@ -1,12 +1,13 @@
 // Archive (Ref #709), reprise de la vue Archive de Nexora Futur et réécrite dans
 // le langage d'Optim : tâches de nexora:taskArchive (archivage le plus récent en
 // tête), restauration annulable, et en plus dans Optim : recherche par titre,
-// filtre par projet, restauration multiple. La mention « purge après 30 jours »
+// filtre par projets, restauration multiple. La mention « purge après 30 jours »
 // est informative : ce site ne purge rien (c'est Nexora qui le fait).
 import { useMemo, useState } from "react";
 import { archiverPlusieurs, archiverTache, restaurerPlusieurs, restaurerTache } from "../donnees/actions";
 import { listeArchive } from "../donnees/archive";
 import { useOptim, useUi } from "./contexte";
+import { MenuCoches } from "./ListeCoches";
 
 const dateArchivage = (iso?: string) => (iso ? new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" }) : "date inconnue");
 
@@ -14,9 +15,9 @@ export function Archive() {
   const { d, projet, executer } = useOptim();
   const { notifier } = useUi();
   const [q, setQ] = useState("");
-  const [projetFiltre, setProjetFiltre] = useState<string | null>(null);
+  const [projetsFiltre, setProjetsFiltre] = useState<string[]>([]);
   const [coches, setCoches] = useState<string[]>([]);
-  const liste = useMemo(() => listeArchive(d.archive, { q, projet: projetFiltre }), [d.archive, q, projetFiltre]);
+  const liste = useMemo(() => listeArchive(d.archive, { q, projets: projetsFiltre }), [d.archive, q, projetsFiltre]);
   const projetsPresents = useMemo(() => [...new Set(d.archive.map((t) => t.projectId))].map((id) => projet(id)).sort((a, b) => (a.name || "").localeCompare(b.name || "", "fr")), [d.archive, projet]);
   const visibles = new Set(liste.map((t) => t.id));
   const choisis = coches.filter((id) => visibles.has(id));
@@ -36,10 +37,7 @@ export function Archive() {
         <p>La purge est faite par Nexora ; Nexora Future Optim ne supprime rien. Archiver se fait depuis la fiche d'une tâche.</p></div>
       <div className="hx-tile ox-ar-barre">
         <input type="search" className="ox-ar-q" placeholder="Rechercher un titre" aria-label="Rechercher dans l'archive" value={q} onChange={(e) => setQ(e.target.value)} />
-        <select aria-label="Filtrer par projet" value={projetFiltre || ""} onChange={(e) => setProjetFiltre(e.target.value || null)}>
-          <option value="">Tous les projets</option>
-          {projetsPresents.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
-        </select>
+        <MenuCoches libelle="Projets" options={projetsPresents.map((p) => ({ id: p.id, libelle: p.name || p.id, couleur: p.color }))} choisis={projetsFiltre} changer={setProjetsFiltre} libelleRecherche="Rechercher un projet" />
         <span className="hx-dim">{liste.length} affichée{liste.length > 1 ? "s" : ""}</span>
         <button type="button" className="hx-btn is-primary" disabled={!choisis.length} onClick={restaurerChoisis}>Restaurer la sélection{choisis.length ? ` (${choisis.length})` : ""}</button>
       </div>

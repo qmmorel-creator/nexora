@@ -8,6 +8,7 @@ import { comparaison, libelleEcart, lignesFrise, type Comparaison } from "../don
 import { santeProjet } from "../donnees/projet";
 import { COLONNES_PROJET, GROUPES_PROJET, REFERENCES, type ColonneProjet, type GroupeProjet, type Reference, type VueEnregistree, type Zoom } from "../donnees/prefs";
 import { dateCourte, initiales, useOptim, useUi } from "./contexte";
+import { ListeCoches } from "./ListeCoches";
 import { BarreFiltres, useFiltrage } from "./filtres";
 import { BarreProjet, clairsemer, Grille, graduations, infobulle, plage, tx } from "./frise";
 import { AideStyle, BarreZoom, SelecteurStyle } from "./Planning";
@@ -119,8 +120,7 @@ export function Projets({ projetId, email, ouvrirProjet }: { projetId: string | 
         </section>
         <div className="hx-pbarrow"><details className="ox-cols"><summary className="hx-btn is-sm">Colonnes ▾</summary>
           <div className="ox-cols-menu" role="group" aria-label="Colonnes affichées">
-            <p><button type="button" className="hx-more" onClick={() => choisirColonnes([...COLONNES_PROJET])}>Tout cocher</button><button type="button" className="hx-more" onClick={() => choisirColonnes([])}>Tout décocher</button></p>
-            {COLONNES_PROJET.map((k) => <label key={k}><input type="checkbox" checked={voir[k]} onChange={() => choisirColonnes(voir[k] ? colonnes.filter((x) => x !== k) : [...colonnes, k])} />{COLONNES[k].libelle}</label>)}
+            <ListeCoches options={COLONNES_PROJET.map((k) => ({ id: k, libelle: COLONNES[k].libelle }))} choisis={colonnes} changer={(ids) => choisirColonnes(ids as ColonneProjet[])} libelleRecherche="Rechercher une colonne" />
           </div></details><BarreZoom r={r} zooms={ZOOMS_PROJET} setZoom={(z) => { void ecrirePrefs({ projets: { ...prefs.projets, zoom: z } }); setDecalage(0); }} decaler={(n) => setDecalage(n === null ? 0 : decalage + n)} />
           <div className="hx-opts"><span>Grouper par</span><div className="hx-seg is-sm">{GROUPES_PROJET.map((g) => <button key={g} type="button" aria-pressed={groupe === g} onClick={() => { void ecrirePrefs({ projets: { ...prefs.projets, groupe: g } }); setReplies(new Set()); }}>{LIB_GROUPE[g]}</button>)}</div></div><SelecteurStyle /></div>
         <BarreFiltres ecran="projets" n={ts.length} masquer={["projets"]} email={email} reglages={{ zoom, groupe, style, reference }} appliquerReglages={appliquer} />

@@ -9,10 +9,12 @@ import {
   LIGNES_JOURNEE, REGROUPEMENTS, TUILES_ACCUEIL, ZOOMS_PLANNING, type CarteCorps, type TuileAccueil, type VueEnregistree,
 } from "../donnees/prefs";
 import { useOptim, useUi } from "./contexte";
+import { ListeCoches } from "./ListeCoches";
 import { estProjetCalendrier } from "../donnees/modele";
 import { useCorps } from "./corps-donnees";
 import { EditeurCarte } from "./Corps";
 import { STYLES_DEF, ZOOMS_DEF } from "./frise";
+import { IconeStyle } from "./IconeStyle";
 import { LIBELLE_GROUPE } from "./Planning";
 import { LIB_GROUPE, LIB_REF, ZOOMS_PROJET } from "./Projets";
 
@@ -36,9 +38,7 @@ function OngletAccueil() {
   const a = prefs.accueil, ordre = [...a.tuiles, ...TUILES_ACCUEIL.filter((t) => !a.tuiles.includes(t))];
   const poser = (tuiles: TuileAccueil[]) => void ecrirePrefs({ accueil: { ...a, tuiles } });
   const deplacer = (t: TuileAccueil, sens: -1 | 1) => { const l = [...a.tuiles], i = l.indexOf(t), j = i + sens; if (i < 0 || j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; poser(l); };
-  const corps = a.corps, plein = corps.length >= MAX_MESURES_CARTE;
-  const basculerMesure = (k: string) => void ecrirePrefs({ accueil: { ...a, corps: corps.includes(k) ? corps.filter((x) => x !== k) : [...corps, k].slice(0, MAX_MESURES_CARTE) } });
-  const groupes = [...new Set(MESURES_SANTE.map((m) => m.group))];
+  const corps = a.corps;
   return <>
     <h3 className="ox-sh">Tuiles affichées <small>cochées = visibles ; flèches = ordre</small></h3>
     <ol className="ox-tuiles">{ordre.map((t) => { const on = a.tuiles.includes(t), i = a.tuiles.indexOf(t); return <li key={t} className={on ? "" : "is-off"}>
@@ -48,10 +48,7 @@ function OngletAccueil() {
     <label className="hx-sopt"><input type="checkbox" checked={a.pixels} onChange={(e) => void ecrirePrefs({ accueil: { ...a, pixels: e.target.checked } })} /><span><b>Pixels au cœur du cadran</b><small>Pixel des tâches et pixel des habitudes ; décoché, le cadran n'affiche que les deux compteurs.</small></span></label>
     <BlocsAccueil />
     <h3 className="ox-sh">Mesures de la tuile Corps <small>{corps.length} / {MAX_MESURES_CARTE}</small></h3>
-    <div className="ox-choix">
-      <div><h4>Activité</h4><label className={!corps.includes("sport") && plein ? "is-off" : ""}><input type="checkbox" checked={corps.includes("sport")} disabled={!corps.includes("sport") && plein} onChange={() => basculerMesure("sport")} />Sport de la semaine</label></div>
-      {groupes.map((g) => <div key={g}><h4>{g}</h4>{MESURES_SANTE.filter((m) => m.group === g).map((m) => { const on = corps.includes(m.key), off = !on && plein; return <label key={m.key} className={off ? "is-off" : ""}><input type="checkbox" checked={on} disabled={off} onChange={() => basculerMesure(m.key)} />{m.label}</label>; })}</div>)}
-    </div>
+    <ListeCoches options={[{ id: "sport", libelle: "Sport de la semaine", groupe: "Activité" }, ...MESURES_SANTE.map((m) => ({ id: m.key, libelle: m.label, groupe: m.group }))]} choisis={corps} max={MAX_MESURES_CARTE} libelleRecherche="Rechercher une mesure" changer={(ids) => void ecrirePrefs({ accueil: { ...prefs.accueil, corps: ids.slice(0, MAX_MESURES_CARTE) } })} />
   </>;
 }
 
@@ -72,7 +69,7 @@ function BlocsAccueil() {
     <Ligne titre="Début"><Segment nom="Début du bloc Semaine" valeurs={["aujourdhui", "lundi"] as const} valeur={s.debut} libelle={(x) => (x === "lundi" ? "Lundi" : "Aujourd'hui")} choisir={(x) => majS({ debut: x })} /></Ligne>
     <div className="ox-scases"><Case on={s.calendriers} maj={(v) => majS({ calendriers: v })} titre="Rendez-vous des calendriers" /><Case on={s.retards} maj={(v) => majS({ retards: v })} titre="Tâches en retard" aide="échues avant la période" /><Case on={s.terminees} maj={(v) => majS({ terminees: v })} titre="Tâches terminées" /><Case on={s.jalonsSeuls} maj={(v) => majS({ jalonsSeuls: v })} titre="Jalons seulement" /></div>
     <Ligne titre="Projets affichés" aide={s.projets.length ? `${s.projets.length} choisi${s.projets.length > 1 ? "s" : ""}` : "tous"}>{s.projets.length > 0 && <button type="button" className="hx-more" onClick={() => majS({ projets: [] })}>Tous</button>}</Ligne>
-    <div className="ox-choix ox-sprojets">{projets.map((p) => { const on = s.projets.includes(p.id); return <label key={p.id}><input type="checkbox" checked={on} onChange={() => majS({ projets: on ? s.projets.filter((x) => x !== p.id) : [...s.projets, p.id] })} /><i className="hx-hdot" style={{ background: p.color || "#94a3b8" }} />{p.name}</label>; })}</div>
+    <ListeCoches options={projets.map((p) => ({ id: p.id, libelle: p.name || p.id, couleur: p.color || "#94a3b8" }))} choisis={s.projets} changer={(ids) => majS({ projets: ids })} libelleRecherche="Rechercher un projet" />
   </>;
 }
 
@@ -113,7 +110,7 @@ function OngletGantt() {
   const pl = prefs.planning, pj = prefs.projets;
   return <>
     <h3 className="ox-sh">Représentation des barres <small>Planning, Projets et tuile Semaine</small></h3>
-    <div className="ox-styles" role="radiogroup" aria-label="Représentation des barres">{STYLES_DEF.map((s) => <label key={s.id} className={prefs.gantt === s.id ? "is-on" : ""}><input type="radio" name="ox-style" checked={prefs.gantt === s.id} onChange={() => void ecrirePrefs({ gantt: s.id })} /><span><b>{s.libelle}</b><small>{s.aide}</small></span></label>)}</div>
+    <div className="ox-styles" role="radiogroup" aria-label="Représentation des barres">{STYLES_DEF.map((s) => <label key={s.id} className={prefs.gantt === s.id ? "is-on" : ""}><input type="radio" name="ox-style" checked={prefs.gantt === s.id} onChange={() => void ecrirePrefs({ gantt: s.id })} /><IconeStyle style={s.id} /><span><b>{s.libelle}</b><small>{s.aide}</small></span></label>)}</div>
     <h3 className="ox-sh">Planning</h3>
     <Ligne titre="Zoom"><Segment nom="Zoom du planning" valeurs={ZOOMS_PLANNING} valeur={pl.zoom} libelle={(z) => ZOOMS_DEF[z].libelle} choisir={(z) => void ecrirePrefs({ planning: { ...pl, zoom: z } })} /></Ligne>
     <Ligne titre="Grouper par"><Segment nom="Groupement du planning" valeurs={GROUPES_PLANNING} valeur={pl.groupe} libelle={(g) => LIBELLE_GROUPE[g]} choisir={(g) => void ecrirePrefs({ planning: { ...pl, groupe: g } })} /></Ligne>
