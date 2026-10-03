@@ -1,6 +1,6 @@
 // Page projet et espaces (Ref #657) : fonctions pures.
 import { ajouterJours, ecartJours, estEnRetard, estReunion, estTerminee, type Catalogues, type Tache } from "./modele";
-import type { EntreeHabitude, ThemeHabitudes } from "./journee";
+import { etatsDuJour, type ThemeHabitudes } from "./habitudes";
 
 const duProjet = (t: Tache, id: string) => t.projectId === id || t.secondaryProjectId === id;
 
@@ -99,16 +99,15 @@ export function journalProjet(journal: Activite[], id: string, n = 10) {
   return journal.filter((a) => a.projectId === id).slice(0, n).map((a) => ({ ...a, libelle: LIB_ACT[a.type || ""] || a.type || "" }));
 }
 
-// Grille d'habitudes : semaines × 7 jours, part des habitudes faites.
-export function grilleHabitudes(themes: ThemeHabitudes[], journal: EntreeHabitude[], jour: string, semaines = 12) {
-  const total = themes.reduce((a, t) => a + (t.habits?.length || 0), 0);
-  const parJour = new Map<string, number>();
-  journal.forEach((e) => parJour.set(e.date, (parJour.get(e.date) || 0) + 1));
+// Grille d'habitudes : semaines × 7 jours, part des habitudes faites parmi les
+// applicables (les « non applicables » sortent du total, comme nexora-project).
+export function grilleHabitudes(themes: ThemeHabitudes[], journal: unknown, nonApplicables: unknown, jour: string, semaines = 12) {
   const [a, mo, j] = jour.split("-").map(Number); const dow = new Date(Date.UTC(a, mo - 1, j)).getUTCDay();
   const lundi = ajouterJours(jour, dow === 0 ? -6 : 1 - dow);
   const depart = ajouterJours(lundi, -7 * (semaines - 1));
   return Array.from({ length: semaines }, (_, s) => Array.from({ length: 7 }, (_, k) => {
     const d = ajouterJours(depart, s * 7 + k);
-    return { jour: d, futur: d > jour, part: total ? Math.min(1, (parJour.get(d) || 0) / total) : 0, nb: parJour.get(d) || 0 };
+    const e = etatsDuJour(themes, journal, nonApplicables, d);
+    return { jour: d, futur: d > jour, part: e.total ? e.faites / e.total : 0, nb: e.faites, total: e.total };
   }));
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aCaser, echeancesDuJour, evenementsDuJour, glissent, habitudesDuJour, horizon, modeParHeure, pointsAttention, termineesLe } from "../src/donnees/journee";
+import { aCaser, echeancesDuJour, evenementsDuJour, glissent, horizon, modeParHeure, pointsAttention, termineesLe } from "../src/donnees/journee";
 import type { Tache } from "../src/donnees/modele";
 import { CAT } from "./fixtures";
 
@@ -36,9 +36,5 @@ describe("fil du jour", () => {
   });
   it("points d'attention : retards, réunions sans compte rendu", () => {
     expect(pointsAttention(T, J, CAT).map((p) => [p.genre, p.t.id])).toEqual([["retard", "e"], ["compte-rendu", "g"]]);
-  });
-  it("habitudes du jour", () => {
-    const r = habitudesDuJour([{ id: "th", name: "Santé", habits: [{ id: "eau", name: "Eau" }, { id: "pas", name: "Pas", kind: "numeric" }] }], [{ habitId: "eau", date: J }, { habitId: "pas", date: J, value: 8 }, { habitId: "eau", date: "2026-10-02" }], J);
-    expect(r[0].habitudes.map((x) => [x.h.id, x.fait, x.valeur])).toEqual([["eau", true, undefined], ["pas", true, 8]]);
   });
 });

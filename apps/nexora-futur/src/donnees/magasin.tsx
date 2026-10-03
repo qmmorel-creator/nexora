@@ -8,15 +8,18 @@ import { analyserJson } from "./segments";
 import { aujourdhuiParis, type Catalogues, type Dossier, type Membre, type Projet, type Statut, type Tache, type TypeTache } from "./modele";
 import { horodater } from "./operations";
 import { metaFiltresParDefaut, normaliserFiltres, type Filtres } from "./filtres";
-import type { EntreeHabitude, ThemeHabitudes } from "./journee";
+import { normaliserJournal, normaliserNonApplicables, normaliserThemes, type EntreeHabitude, type NonApplicable, type ThemeHabitudes } from "./habitudes";
+import { ajouterAuJournal, entreesJournal, type EntreeJournal } from "./journal";
+import { normaliserPrefs, type PrefsFutur } from "./prefs";
 import type { Activite, Depense } from "./projet";
 
 export const CLES = {
   projets: "nexora:projects", dossiers: "nexora:projectFolders", statuts: "nexora:statuses", types: "nexora:taskTypes",
   membres: "nexora:teamMembers", taches: "nexora:tasks", archive: "nexora:taskArchive", favoris: "nexora:favorites",
   metaFiltres: "nexora:metaFilters", defauts: "nexora:taskDefaults", modeles: "nexora:taskTemplates", raccourcis: "nexora:shortcutPrefs",
-  themesHabitudes: "nexora:habitThemes", journalHabitudes: "nexora:habitLog",
+  themesHabitudes: "nexora:habitThemes", journalHabitudes: "nexora:habitLog", nonApplicables: "nexora:habitSkips",
   depenses: "nexora:expenses", journal: "nexora:activityLog", equipes: "nexora:teams",
+  prefs: "nexora:futurPrefs",
 } as const;
 type NomCle = keyof typeof CLES;
 
@@ -28,7 +31,7 @@ export interface Favori { type: "project" | "view" | "dashboard" | "task"; id: s
 export interface Donnees extends Catalogues {
   dossiers: Dossier[]; taches: Tache[]; archive: Tache[]; favoris: Favori[]; metaFiltres: Filtres;
   defauts: Defauts; modeles: Modele[]; raccourcis: Record<string, string>;
-  themesHabitudes: ThemeHabitudes[]; journalHabitudes: EntreeHabitude[];
+  themesHabitudes: ThemeHabitudes[]; journalHabitudes: EntreeHabitude[]; nonApplicables: NonApplicable[]; prefs: PrefsFutur;
   depenses: Depense[]; journal: Activite[]; equipes: { id: string; name?: string; color?: string }[];
   etats: Record<NomCle, EtatCle>; charge: boolean; aujourdhui: string;
 }
@@ -36,7 +39,15 @@ export interface Donnees extends Catalogues {
 export interface Resultat { message?: string; annuler?: () => Promise<void>; }
 export type Mutation = (taches: Tache[], archive: Tache[], cat: Catalogues) => { taches?: Tache[]; archive?: Tache[] };
 
-interface Contexte { d: Donnees; executer: (m: Mutation) => Promise<void>; enCours: number; source: Source; }
+// Clés JSON modifiables hors tâches (Ref #669).
+export type CleJson = "journalHabitudes" | "nonApplicables" | "prefs";
+export interface BilanMutation { journal?: string; }
+
+interface Contexte {
+  d: Donnees; enCours: number; source: Source;
+  executer: (m: Mutation) => Promise<BilanMutation>;
+  ecrireJson: (nom: CleJson, f: (valeur: unknown) => unknown) => Promise<void>;
+}
 const Ctx = createContext<Contexte | null>(null);
 
 const VIDE: EtatCle = { lecture: null, erreur: null, charge: false };
@@ -49,7 +60,7 @@ function parse<T>(e: EtatCle, cle: string, defaut: T): T {
 // d'abord (une tâche n'est retirée qu'une fois sa copie en sécurité) ; les
 // deux passages partent de la MÊME archive d'origine, sinon une restauration
 // rejouée sur l'archive déjà modifiée ne trouverait plus la tâche.
-export async function appliquerMutation(source: Pick<Source, "modifier">, m: Mutation, cat: () => Catalogues, instantane: { taches: string; archive: string }, maintenant = () => new Date().toISOString()): Promise<void> {
+export async function appliquerMutation(source: Pick<Source, "modifier">, m: Mutation, cat: () => Catalogues, instantane: { taches: string; archive: string }, maintenant = () => new Date().toISOString()): Promise<BilanMutation> {
   const lire = (cle: string, txt: string) => analyserJson<Tache[]>(cle, txt, []);
   const sonde = m(lire(CLES.taches, instantane.taches), lire(CLES.archive, instantane.archive), cat());
   let archiveAvant: Tache[] | undefined;
@@ -60,12 +71,26 @@ export async function appliquerMutation(source: Pick<Source, "modifier">, m: Mut
       return JSON.stringify(r.archive ?? archiveAvant);
     });
   }
-  if (sonde.taches) {
-    await source.modifier(CLES.taches, (txt) => {
-      const t = lire(CLES.taches, txt);
-      const r = m(t, archiveAvant ?? lire(CLES.archive, instantane.archive), cat());
-      return JSON.stringify(horodater(t, r.taches ?? t, cat(), maintenant()));
-    });
+  if (!sonde.taches) return {};
+  // Avant et après de la DERNIÈRE application (celle qui a été écrite, le
+  // transformateur pouvant être rejoué sur conflit).
+  let avant: Tache[] = []; let apres: Tache[] = []; let at = "";
+  await source.modifier(CLES.taches, (txt) => {
+    const t = lire(CLES.taches, txt);
+    const r = m(t, archiveAvant ?? lire(CLES.archive, instantane.archive), cat());
+    at = maintenant();
+    avant = t; apres = horodater(t, r.taches ?? t, cat(), at);
+    return JSON.stringify(apres);
+  });
+  const entrees = entreesJournal(avant, apres, cat().statuts, at);
+  if (!entrees.length) return {};
+  // Les tâches sont déjà enregistrées : un échec du journal est signalé sans
+  // annuler l'action.
+  try {
+    await source.modifier(CLES.journal, (txt) => JSON.stringify(ajouterAuJournal(analyserJson<EntreeJournal[]>(CLES.journal, txt, []), entrees)));
+    return {};
+  } catch (e) {
+    return { journal: (e as Error).message };
   }
 }
 
@@ -93,8 +118,10 @@ export function FournisseurDonnees({ children, source }: { children: ReactNode; 
       metaFiltres: normaliserFiltres(parse<unknown>(etats.metaFiltres, CLES.metaFiltres, null), metaFiltresParDefaut),
       defauts: parse<Defauts>(etats.defauts, CLES.defauts, {}), modeles: parse<Modele[]>(etats.modeles, CLES.modeles, []),
       raccourcis: parse<Record<string, string>>(etats.raccourcis, CLES.raccourcis, {}),
-      themesHabitudes: parse<ThemeHabitudes[]>(etats.themesHabitudes, CLES.themesHabitudes, []),
-      journalHabitudes: parse<EntreeHabitude[]>(etats.journalHabitudes, CLES.journalHabitudes, []),
+      themesHabitudes: normaliserThemes(parse<unknown>(etats.themesHabitudes, CLES.themesHabitudes, [])),
+      journalHabitudes: normaliserJournal(parse<unknown>(etats.journalHabitudes, CLES.journalHabitudes, [])),
+      nonApplicables: normaliserNonApplicables(parse<unknown>(etats.nonApplicables, CLES.nonApplicables, [])),
+      prefs: normaliserPrefs(parse<unknown>(etats.prefs, CLES.prefs, null)),
       depenses: parse<Depense[]>(etats.depenses, CLES.depenses, []), journal: parse<Activite[]>(etats.journal, CLES.journal, []),
       equipes: parse<{ id: string; name?: string; color?: string }[]>(etats.equipes, CLES.equipes, []),
       etats, charge: etats.taches.charge && etats.projets.charge && etats.statuts.charge && etats.types.charge, aujourdhui: jour,
@@ -112,13 +139,21 @@ export function FournisseurDonnees({ children, source }: { children: ReactNode; 
   const executer = useCallback(async (m: Mutation) => {
     setEnCours((n) => n + 1);
     try {
-      await appliquerMutation(source, m, () => catRef.current, {
+      return await appliquerMutation(source, m, () => catRef.current, {
         taches: etatsRef.current.taches.lecture?.texte || "", archive: etatsRef.current.archive.lecture?.texte || "",
       });
     } finally { setEnCours((n) => n - 1); }
   }, [source]);
 
-  const valeur = useMemo(() => ({ d, executer, enCours, source }), [d, executer, enCours, source]);
+  // Transformation appliquée à la version la plus récente de la clé (rejouable).
+  const ecrireJson = useCallback(async (nom: CleJson, f: (valeur: unknown) => unknown) => {
+    setEnCours((n) => n + 1);
+    try {
+      await source.modifier(CLES[nom], (txt) => JSON.stringify(f(analyserJson<unknown>(CLES[nom], txt, null))));
+    } finally { setEnCours((n) => n - 1); }
+  }, [source]);
+
+  const valeur = useMemo(() => ({ d, executer, ecrireJson, enCours, source }), [d, executer, ecrireJson, enCours, source]);
   return <Ctx.Provider value={valeur}>{children}</Ctx.Provider>;
 }
 

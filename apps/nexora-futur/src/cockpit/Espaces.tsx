@@ -4,9 +4,11 @@ import type { Donnees } from "../donnees/magasin";
 import type { Rapport, Source } from "../donnees/source";
 import { estEnRetard } from "../donnees/modele";
 import { chargeParPersonne, grilleHabitudes } from "../donnees/projet";
-import { habitudesDuJour } from "../donnees/journee";
+import { etatsDuJour } from "../donnees/habitudes";
+import { ajouterJours } from "../donnees/modele";
+import { HabitudesJour } from "./Habitudes";
 import { naviguer } from "../navigation/routeur";
-import { Cartouche, Etat, Surtitre } from "../composants";
+import { Bouton, Cartouche, Etat, Surtitre } from "../composants";
 import { initiales } from "./Lignes";
 
 export type Espace = "fil" | "chantiers" | "finances" | "corps" | "equipe";
@@ -17,13 +19,16 @@ export const ESPACES: { id: Espace; nom: string; touche: string; defaut: string;
   { id: "corps", nom: "Corps", touche: "s", defaut: "/corps", lettre: "♥" },
   { id: "equipe", nom: "Équipe", touche: "e", defaut: "/equipe", lettre: "◎" },
 ];
-const CLE_MEMOIRE = "nexora-futur:espaces";
-export function memoriser(espace: Espace, adresse: string) {
-  try { const m = JSON.parse(localStorage.getItem(CLE_MEMOIRE) || "{}"); m[espace] = adresse; localStorage.setItem(CLE_MEMOIRE, JSON.stringify(m)); } catch { /* mémoire de session */ }
-}
-export function allerEspace(espace: Espace) {
-  let cible = ESPACES.find((e) => e.id === espace)!.defaut;
-  try { const m = JSON.parse(localStorage.getItem(CLE_MEMOIRE) || "{}"); if (typeof m[espace] === "string" && m[espace].startsWith("/")) cible = m[espace]; } catch { /* défaut */ }
+// Dernière adresse de chaque espace (Ref #669) : la session en cours d'abord,
+// puis nexora:futurPrefs (synchronisée entre appareils), puis l'ancienne
+// mémoire locale du lot 4, puis l'adresse par défaut.
+const memoire = new Map<Espace, string>();
+const ANCIENNE_MEMOIRE = "nexora-futur:espaces";
+export function memoriser(espace: Espace, adresse: string) { memoire.set(espace, adresse); }
+export function allerEspace(espace: Espace, prefs: Record<string, string> = {}) {
+  let ancienne: string | undefined;
+  try { const m = JSON.parse(localStorage.getItem(ANCIENNE_MEMOIRE) || "{}"); if (typeof m[espace] === "string") ancienne = m[espace]; } catch { /* absente */ }
+  const cible = [memoire.get(espace), prefs[espace], ancienne].find((x) => typeof x === "string" && x.startsWith("/")) || ESPACES.find((e) => e.id === espace)!.defaut;
   const [chemin, q] = cible.split("?");
   naviguer(chemin, new URLSearchParams(q || ""));
 }
@@ -36,7 +41,7 @@ export function useRapportDuJour(source: Source, jour: string) {
 
 export function Bande({ actif, d, budget }: { actif: Espace; d: Donnees; budget: Rapport | null }) {
   const retards = useMemo(() => d.taches.filter((t) => estEnRetard(t, d.statuts, d.aujourdhui)).length, [d.taches, d.statuts, d.aujourdhui]);
-  const hab = useMemo(() => { const h = habitudesDuJour(d.themesHabitudes, d.journalHabitudes, d.aujourdhui).flatMap((x) => x.habitudes); return h.length ? `${h.filter((x) => x.fait).length}/${h.length}` : ""; }, [d]);
+  const hab = useMemo(() => { const e = etatsDuJour(d.themesHabitudes, d.journalHabitudes, d.nonApplicables, d.aujourdhui); return e.total ? `${e.faites}/${e.total}` : ""; }, [d.themesHabitudes, d.journalHabitudes, d.nonApplicables, d.aujourdhui]);
   const b = budget?.budget as { ok?: boolean; toCategorize?: number } | undefined;
   const signaux: Partial<Record<Espace, string>> = { chantiers: retards ? String(retards) : "", finances: b?.ok && b.toCategorize ? String(b.toCategorize) : "", corps: hab };
   return (
@@ -44,7 +49,7 @@ export function Bande({ actif, d, budget }: { actif: Espace; d: Donnees; budget:
       <span className="logo" aria-hidden="true">N</span>
       {ESPACES.map((e) => (
         <a key={e.id} href={e.defaut} className={`bande-el ${actif === e.id ? "actif" : ""}`} aria-current={actif === e.id ? "page" : undefined}
-          onClick={(ev) => { ev.preventDefault(); allerEspace(e.id); }} title={`${e.nom} (g puis ${e.touche})`}>
+          onClick={(ev) => { ev.preventDefault(); allerEspace(e.id, d.prefs.espaces); }} title={`${e.nom} (g puis ${e.touche})`}>
           <span className="bande-i" aria-hidden="true">{e.lettre}</span><span className="bande-nom">{e.nom}</span>
           {signaux[e.id] && <span className={`bande-n mono ${e.id === "chantiers" ? "crit" : ""}`}>{signaux[e.id]}</span>}
         </a>
@@ -56,7 +61,7 @@ export function Bande({ actif, d, budget }: { actif: Espace; d: Donnees; budget:
 export function NavEspace({ espace }: { espace: Espace }) {
   const LOTS: Record<string, [string, string][]> = {
     finances: [["Synthèse du rapport", "disponible"], ["Budget du mois, transactions, patrimoine, flux", "lot 6 · #659"], ["Devis, factures, Finance PRO", "lot 6 · #659"]],
-    corps: [["Habitudes (12 semaines)", "disponible"], ["Sport, santé, photos", "lot 7 · #660"], ["Cocher les habitudes", "décision attendue"]],
+    corps: [["Habitudes (12 semaines)", "disponible"], ["Cocher les habitudes", "disponible"], ["Sport, santé, photos", "lot 7 · #660"]],
     equipe: [["Charge par personne", "disponible"], ["Charge du personnel, organigramme", "lot 7 · #660"]],
   };
   return (
@@ -90,23 +95,32 @@ export function PageEquipe({ d }: { d: Donnees }) {
 }
 
 export function PageCorps({ d }: { d: Donnees }) {
-  const grille = useMemo(() => grilleHabitudes(d.themesHabitudes, d.journalHabitudes, d.aujourdhui), [d.themesHabitudes, d.journalHabitudes, d.aujourdhui]);
-  const auj = useMemo(() => habitudesDuJour(d.themesHabitudes, d.journalHabitudes, d.aujourdhui), [d]);
+  const [jour, setJour] = useState(d.aujourdhui);
+  const grille = useMemo(() => grilleHabitudes(d.themesHabitudes, d.journalHabitudes, d.nonApplicables, d.aujourdhui), [d.themesHabitudes, d.journalHabitudes, d.nonApplicables, d.aujourdhui]);
+  const premier = grille[0][0].jour;
+  const libelle = jour === d.aujourdhui ? "Aujourd'hui" : jour === ajouterJours(d.aujourdhui, -1) ? "Hier" : new Date(`${jour}T12:00:00Z`).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
   return (
     <div className="espace">
-      <Cartouche surtitre="Espace Corps" titre="Habitudes" meta={<span>12 semaines · lecture seule</span>} />
+      <Cartouche surtitre="Espace Corps" titre="Habitudes" meta={<span>12 semaines · un clic sur un jour pour le compléter</span>} />
       <section className="panneau espace-bloc" aria-label="Grille des habitudes">
-        <Surtitre>Part des habitudes faites par jour</Surtitre>
+        <Surtitre>Part des habitudes validées par jour (hors non applicables)</Surtitre>
         <div className="hab-grille">
           {["L", "M", "M", "J", "V", "S", "D"].map((j, k) => <span key={k} className="hab-j mono discret" style={{ gridRow: k + 2 }}>{j}</span>)}
-          {grille.map((s, i) => s.map((c, k) => (
-            <span key={c.jour} className={`hab-c ${c.futur ? "futur" : ""} ${c.jour === d.aujourdhui ? "auj" : ""}`} style={{ gridColumn: i + 2, gridRow: k + 2, opacity: c.futur ? 1 : 0.15 + 0.85 * c.part }} title={`${c.jour} : ${c.nb} habitude(s)`} />
+          {grille.map((s, i) => s.map((c, k) => (c.futur
+            ? <span key={c.jour} className="hab-c futur" style={{ gridColumn: i + 2, gridRow: k + 2 }} />
+            : <button key={c.jour} type="button" className={`hab-c hab-c-btn ${c.jour === jour ? "auj" : ""}`} style={{ gridColumn: i + 2, gridRow: k + 2, opacity: 0.15 + 0.85 * c.part }}
+              aria-pressed={c.jour === jour} aria-label={`${c.jour} : ${c.nb} sur ${c.total}`} title={`${c.jour} : ${c.nb}/${c.total}`} onClick={() => setJour(c.jour)} />
           )))}
         </div>
       </section>
-      <section className="panneau espace-bloc"><Surtitre>Aujourd'hui</Surtitre>
-        {auj.map(({ theme, habitudes }) => <div key={theme.id} className="fil-habitudes"><span className="discret">{theme.name}</span>{habitudes.map(({ h, fait, valeur }) => <Etat key={h.id} ton={fait ? "ok" : "neutre"} point={false}>{fait ? "✓ " : ""}{h.name}{valeur !== undefined ? ` · ${valeur}` : ""}</Etat>)}</div>)}
-        {!auj.length && <p className="discret">Aucune habitude configurée.</p>}
+      <section className="panneau espace-bloc" aria-label={`Habitudes, ${libelle}`}>
+        <div className="corps-jour">
+          <Bouton variante="discret" aria-label="Jour précédent" disabled={jour <= premier} onClick={() => setJour(ajouterJours(jour, -1))}>←</Bouton>
+          <Surtitre>{libelle}</Surtitre>
+          <Bouton variante="discret" aria-label="Jour suivant" disabled={jour >= d.aujourdhui} onClick={() => setJour(ajouterJours(jour, 1))}>→</Bouton>
+          {jour !== d.aujourdhui && <Bouton variante="discret" onClick={() => setJour(d.aujourdhui)}>Aujourd'hui</Bouton>}
+        </div>
+        <HabitudesJour jour={jour} />
       </section>
     </div>
   );

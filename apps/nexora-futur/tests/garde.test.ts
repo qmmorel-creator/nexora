@@ -3,8 +3,8 @@ import { ErreurLectureSeule, ecritureAutorisee, exigerEcriture } from "../src/do
 import { CLES_ECRITURE_OUVERTES } from "../src/donnees/config";
 
 describe("garde d'écriture", () => {
-  it("seules les tâches et l'archive sont ouvertes (lot 2, #655)", () => {
-    expect([...CLES_ECRITURE_OUVERTES].sort()).toEqual(["nexora:taskArchive", "nexora:tasks"]);
+  it("clés ouvertes : tâches et archive (#655), journal, habitudes et préférences Futur (#669)", () => {
+    expect([...CLES_ECRITURE_OUVERTES].sort()).toEqual(["nexora:activityLog", "nexora:futurPrefs", "nexora:habitLog", "nexora:habitSkips", "nexora:taskArchive", "nexora:tasks"]);
   });
   it("refuse toute clé non ouverte", () => {
     expect(() => exigerEcriture("nexora:tasks", [])).toThrow(ErreurLectureSeule);

@@ -13,5 +13,10 @@ export const FIREBASE_CONFIG = {
 
 // Clés Firestore que Nexora Futur a le droit d'écrire. Décision de Quentin
 // (#652) : lecture seule par défaut, ouverture clé par clé dans le lot qui en a
-// besoin. Lot 2 (#655, décision du 03/10/2026) : tâches et archive seulement.
-export const CLES_ECRITURE_OUVERTES: readonly string[] = ["nexora:tasks", "nexora:taskArchive"];
+// besoin. Lot 2 (#655, décision du 03/10/2026) : tâches et archive.
+// #669 (décision du 03/10/2026) : journal d'activité, journal des habitudes,
+// « non applicable », et la clé propre à Futur nexora:futurPrefs.
+export const CLES_ECRITURE_OUVERTES: readonly string[] = [
+  "nexora:tasks", "nexora:taskArchive",
+  "nexora:activityLog", "nexora:habitLog", "nexora:habitSkips", "nexora:futurPrefs",
+];

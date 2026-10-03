@@ -23,6 +23,7 @@ import { FilDuJour } from "./FilDuJour";
 import { PageProjet } from "./PageProjet";
 import { Bande, ESPACES, NavEspace, PageCorps, PageEquipe, PageFinances, allerEspace, memoriser, useRapportDuJour, type Espace } from "./Espaces";
 import { aCaser, type ModeJour } from "../donnees/journee";
+import { fusionnerPrefs } from "../donnees/prefs";
 import { archiverTache, basculer, creer, dupliquerTache, modifier, remettre, restaurerTache, retirer, statutCyclique } from "./actions";
 
 type Lentille = "page" | "liste" | "colonnes";
@@ -36,7 +37,7 @@ const AIDE: [string, string][] = [
 ];
 
 export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
-  const { d, executer, enCours, source } = useDonnees();
+  const { d, executer, ecrireJson, enCours, source } = useDonnees();
   const notifier = useNotifier();
   const route = useRoute();
   const [apparence, changerApparence] = useApparence();
@@ -81,14 +82,34 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const ordre = useMemo(() => (vue === "fil" ? aCaser(d.taches, d.aujourdhui, d).map((t) => t.id) : paquets.flatMap((p) => p.taches.map((t) => t.id))), [vue, paquets, d]);
   const tacheOuverte = d.taches.find((t) => t.id === ouverte);
   const rapportDuJour = useRapportDuJour(source, d.aujourdhui);
-  // Chaque espace mémorise sa dernière adresse (préférence locale).
-  useEffect(() => { memoriser(espace, location.pathname + location.search); }, [espace, route.chemin, route.params]);
+  // Chaque espace mémorise sa dernière adresse (Ref #669) : immédiatement pour
+  // la session, puis dans nexora:futurPrefs, groupé 3 s après la dernière
+  // navigation (aucun espace en attente n'est perdu en changeant d'espace).
+  const prefsEnAttente = useRef<Record<string, string>>({});
+  const minuteurPrefs = useRef<ReturnType<typeof setTimeout>>();
+  // L'adresse vient de la route DE CE RENDU, jamais de `location` : un effet
+  // exécuté en retard, après une nouvelle navigation, mémoriserait sinon
+  // l'adresse d'un autre espace.
+  const q = route.params.toString();
+  const adresseRendu = route.chemin + (q ? `?${q}` : "");
+  useEffect(() => {
+    const adresse = adresseRendu;
+    memoriser(espace, adresse);
+    if (!d.etats.prefs.charge || d.prefs.espaces[espace] === adresse) return;
+    prefsEnAttente.current[espace] = adresse;
+    clearTimeout(minuteurPrefs.current);
+    minuteurPrefs.current = setTimeout(() => {
+      const espaces = prefsEnAttente.current; prefsEnAttente.current = {};
+      ecrireJson("prefs", (v) => fusionnerPrefs(v, { espaces })).catch((e) => console.warn("Préférences non enregistrées", e));
+    }, 3000);
+  }, [espace, adresseRendu, d.etats.prefs.charge]); // eslint-disable-line react-hooks/exhaustive-deps
   const accord = useRef(0);
 
   // Exécution avec retour visible et « Annuler ».
   const agir = useCallback(async (m: Mutation, message?: string, inverse?: () => Mutation) => {
     try {
-      await executer(m);
+      const bilan = await executer(m);
+      if (bilan.journal) notifier({ message: `Modification enregistrée, mais le journal d'activité n'a pas pu être mis à jour : ${bilan.journal}`, ton: "crit" });
       if (message) notifier({ message, annuler: inverse ? () => { executer(inverse()).catch((e) => notifier({ message: (e as Error).message, ton: "crit" })); } : undefined });
     } catch (e) {
       const err = e as Error;
@@ -166,7 +187,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
       if (accord.current && Date.now() - accord.current < 1200) {
         accord.current = 0;
         const cible = ESPACES.find((x) => x.touche === e.key.toLowerCase());
-        if (cible) { e.preventDefault(); allerEspace(cible.id); return; }
+        if (cible) { e.preventDefault(); allerEspace(cible.id, d.prefs.espaces); return; }
       }
       if (e.key === "g") { accord.current = Date.now(); return; }
       const sel = selection && ordre.includes(selection) ? selection : undefined;
@@ -257,7 +278,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
       <footer className="etat-barre mono" aria-live="polite">
         <span className={enCours ? "" : "ok"}>{enCours ? "● Enregistrement…" : "● Synchronisé"}</span>
         <span>Tâches · rév. {d.etats.taches.lecture?.revision?.slice(0, 8) || "—"}</span>
-        <span>Écriture : tâches et archive · le reste en lecture seule</span>
+        <span>Écriture : tâches, archive, journal, habitudes, préférences · le reste en lecture seule</span>
         <span className="marge-auto"><Kbd>⌘K</Kbd> commandes · <Kbd>?</Kbd> raccourcis</span>
       </footer>
       {palette && <Palette key={palette} ouverte modeInitial={palette} onFermer={() => setPalette(null)} cat={d} taches={d.taches} archive={d.archive} aujourdhui={d.aujourdhui} commandes={commandes}

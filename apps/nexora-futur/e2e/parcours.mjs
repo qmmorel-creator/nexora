@@ -17,8 +17,9 @@ await new Promise((ok, ko) => { vite.stdout.on("data", (b) => /Local/.test(Strin
 const navigateur = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const erreurs = [];
 let etape = "";
+let page;
 try {
-  const page = await navigateur.newPage({ viewport: { width: 1500, height: 920 } });
+  page = await navigateur.newPage({ viewport: { width: 1500, height: 920 } });
   page.setDefaultTimeout(8000);
   page.on("pageerror", (e) => erreurs.push(e.message));
   page.on("console", (m) => m.type() === "error" && erreurs.push(m.text()));
@@ -173,6 +174,48 @@ try {
   await page.keyboard.press("g"); await page.keyboard.press("c");
   await page.waitForTimeout(150);
   assert.match(page.url(), /\/projets\/p-ctex6$/, "Chantiers revient à la dernière adresse");
+  const prefs = () => page.evaluate(() => window.__nexoraDemo.valeur("nexora:futurPrefs"));
+  assert.deepEqual((await prefs())?.pageProjet?.masquees, ["journal"], "ordre des sections synchronisé");
+  await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:futurPrefs")?.espaces?.chantiers === "/projets/p-ctex6", null, { timeout: 6000 });
+
+  etape = "habitudes et journal"; console.log("→", etape);
+  const valeur = (cle) => page.evaluate((c) => window.__nexoraDemo.valeur(c), cle);
+  await page.keyboard.press("g"); await page.keyboard.press("s");
+  const jourHab = page.getByRole("region", { name: "Habitudes, Aujourd'hui" });
+  await jourHab.waitFor();
+  await jourHab.getByRole("checkbox", { name: /Bureau/ }).click();
+  await jourHab.getByRole("checkbox", { name: /Bureau/, checked: true }).waitFor();
+  await jourHab.getByRole("checkbox", { name: /Télétravail/ }).click();
+  await jourHab.getByRole("checkbox", { name: /Télétravail/, checked: true }).waitFor();
+  assert.equal(await jourHab.getByRole("checkbox", { name: /Bureau/ }).getAttribute("aria-checked"), "false", "choix unique : Bureau décoché");
+  await jourHab.getByRole("button", { name: "Augmenter Pas (milliers)" }).click();
+  await jourHab.getByText("0/10").waitFor();
+  await jourHab.getByRole("button", { name: "Augmenter Pas (milliers)" }).click();
+  await jourHab.getByText("2/10").waitFor();
+  await jourHab.getByRole("button", { name: "Méditation non applicable" }).click();
+  await jourHab.getByRole("button", { name: "Méditation non applicable", pressed: true }).waitFor();
+  const aujourdhui = await page.evaluate(() => new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()));
+  const duJour = (await valeur("nexora:habitLog")).filter((e) => e.date === aujourdhui);
+  assert.deepEqual(duJour.filter((e) => ["h4", "h5", "h6"].includes(e.habitId)).map((e) => [e.id, e.value]), [[`h4|${aujourdhui}`, 2], [`h6|${aujourdhui}`, undefined]]);
+  assert.deepEqual((await valeur("nexora:habitSkips")).map((e) => e.id), [`h3|${aujourdhui}`]);
+  await capture("10-corps-habitudes");
+  // Hier, depuis la grille.
+  await page.getByRole("button", { name: "Jour précédent" }).click();
+  await page.getByRole("region", { name: "Habitudes, Hier" }).getByRole("checkbox", { name: /Bureau/ }).click();
+  assert.ok((await valeur("nexora:habitLog")).some((e) => e.habitId === "h5" && e.date < aujourdhui), "habitude cochée pour hier");
+  // Journal d'activité : une tâche terminée au clavier y est inscrite une fois.
+  await page.keyboard.press("g"); await page.keyboard.press("c");
+  await page.waitForTimeout(150);
+  await page.keyboard.press("1");
+  await page.getByRole("grid", { name: "Tâches" }).waitFor();
+  await page.keyboard.press("j");
+  const choisie = await page.locator('[role="row"][aria-selected="true"]').getAttribute("data-id");
+  await page.keyboard.press("e");
+  await page.waitForFunction((id) => (window.__nexoraDemo.valeur("nexora:activityLog") || []).some((e) => e.taskId === id && e.type === "completed"), choisie);
+  const journal = await valeur("nexora:activityLog");
+  assert.equal(journal.filter((e) => e.taskId === choisie && e.type === "completed").length, 1, "une seule entrée");
+  assert.equal(journal[0].taskId, choisie, "entrée en tête du journal");
+  assert.equal(new Set(journal.map((e) => e.id)).size, journal.length, "identifiants uniques");
 
   etape = "mode sombre"; console.log("→", etape);
   await page.goto(`http://127.0.0.1:${PORT}/projets/p-ctex6?t=t2`);
@@ -186,6 +229,8 @@ try {
   console.log(`Parcours e2e : OK (${(await import("node:fs")).readFileSync(new URL(import.meta.url), "utf8").match(/^  etape = "/gm).length} étapes)`);
 } catch (e) {
   console.error(`Parcours e2e en échec à l'étape « ${etape} » :`, e.message, erreurs);
+  await page?.screenshot({ path: `${sortie}/echec.png` }).catch(() => {});
+  console.error("Adresse au moment de l'échec :", page?.url());
   process.exitCode = 1;
 } finally {
   await navigateur.close(); vite.kill();

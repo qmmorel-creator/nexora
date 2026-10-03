@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { ajouterJours, ecartJours, estReunion, estTerminee, type Tache } from "../donnees/modele";
 import type { Donnees } from "../donnees/magasin";
 import type { RapportsJour, Source } from "../donnees/source";
-import { aCaser, echeancesDuJour, evenementsDuJour, glissent, habitudesDuJour, heureParis, horizon, modeParHeure, pointsAttention, termineesLe, type ModeJour } from "../donnees/journee";
+import { aCaser, echeancesDuJour, evenementsDuJour, glissent, heureParis, horizon, modeParHeure, pointsAttention, termineesLe, type ModeJour } from "../donnees/journee";
+import { HabitudesJour } from "./Habitudes";
 import { Bouton, Etat, Segment, Surtitre } from "../composants";
 import { initiales } from "./Lignes";
 
@@ -64,7 +65,6 @@ export function FilDuJour({ d, source, mode: modeChoisi, setMode, selection, onO
   const echeances = useMemo(() => echeancesDuJour(d.taches, jour, d), [d, jour]);
   const caser = useMemo(() => aCaser(d.taches, jour, d), [d, jour]);
   const points = useMemo(() => pointsAttention(d.taches, jour, d), [d, jour]);
-  const hab = useMemo(() => habitudesDuJour(d.themesHabitudes, d.journalHabitudes, jour), [d.themesHabitudes, d.journalHabitudes, jour]);
   const hz = useMemo(() => horizon(d.taches, jour, d, 14), [d, jour]);
   const [survol, setSurvol] = useState<number | null>(null);
 
@@ -178,11 +178,7 @@ export function FilDuJour({ d, source, mode: modeChoisi, setMode, selection, onO
             <section className="panneau fil-carte" aria-label="À caser aujourd'hui"><Surtitre>À caser · glisser sur la frise</Surtitre>
               {caser.map((t) => carteTache(t, t.end && t.end < jour ? `−${ecartJours(t.end, jour)} j` : "auj."))}
               {!caser.length && <p className="discret">Rien à caser : aucune échéance du jour sans heure, aucun retard.</p>}</section>
-            <section className="panneau fil-carte"><Surtitre>Habitudes · lecture seule</Surtitre>
-              {hab.map(({ theme, habitudes }) => (
-                <div key={theme.id} className="fil-habitudes"><span className="discret">{theme.name}</span>
-                  {habitudes.map(({ h, fait, valeur }) => <Etat key={h.id} ton={fait ? "ok" : "neutre"} point={false}>{fait ? "✓ " : ""}{h.name}{valeur !== undefined ? ` · ${valeur}` : ""}</Etat>)}</div>
-              ))}{!hab.length && <p className="discret">Aucune habitude configurée.</p>}</section>
+            <section className="panneau fil-carte" aria-label="Habitudes du jour"><Surtitre>Habitudes</Surtitre><HabitudesJour jour={jour} /></section>
           </div>
         </div>
       )}

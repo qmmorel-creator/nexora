@@ -18,7 +18,11 @@ export function donneesDemo(j = aujourdhuiParis()): Record<string, unknown> {
     "nexora:teams": [{ id: "eq1", name: "Travaux" }, { id: "eq2", name: "Communication" }],
     "nexora:expenses": [{ id: "x1", projectId: "p-ctex6", amount: 22500, status: "payee" }, { id: "x2", projectId: "p-ctex6", amount: 8700, status: "facturee" }],
     "nexora:activityLog": [{ id: "l1", type: "reassigned", taskId: "t1", taskTitle: "Documents FOR-0129", projectId: "p-ctex6", to: "Vincent Bernard", at: new Date(Date.now() - 86400000).toISOString() }, { id: "l2", type: "deadlineChanged", taskId: "t3", taskTitle: "Visite DREAL", projectId: "p-ctex6", toDate: J(4), at: new Date(Date.now() - 3 * 86400000).toISOString() }],
-    "nexora:habitThemes": [{ id: "th1", name: "Santé", color: "#16a34a", habits: [{ id: "h1", name: "Eau 2 L" }, { id: "h2", name: "Lecture" }, { id: "h3", name: "Méditation" }] }],
+    "nexora:habitThemes": [
+      { id: "th1", name: "Santé", color: "#16a34a", selectionMode: "multi", habits: [{ id: "h1", name: "Eau 2 L" }, { id: "h2", name: "Lecture" }, { id: "h3", name: "Méditation" }, { id: "h4", name: "Pas (milliers)", kind: "numeric", min: 0, max: 10, step: 2 }] },
+      { id: "th2", name: "Lieu", color: "#2563eb", selectionMode: "single", habits: [{ id: "h5", name: "Bureau" }, { id: "h6", name: "Télétravail" }] },
+    ],
+    "nexora:habitSkips": [],
     "nexora:habitLog": Array.from({ length: 60 }, (_, i) => ({ habitId: ["h1", "h2", "h3"][i % 3], date: J(-Math.floor(i / 2)) })).filter((e, i, a) => a.findIndex((x) => x.habitId === e.habitId && x.date === e.date) === i),
     "nexora:tasks": [
       { id: "t1", title: "Documents FOR-0129", projectId: "p-ctex6", statusId: "s3", taskTypeId: "tt1", start: J(-70), end: J(-44), assignee: "Vincent Bernard", criticality: "urgent", progress: 60, checklist: [{ id: "c1", text: "Plan de contrôle", done: true }, { id: "c2", text: "Notes de calcul", done: false }] },
