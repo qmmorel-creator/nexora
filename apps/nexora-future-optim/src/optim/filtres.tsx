@@ -5,6 +5,7 @@ import type { Tache } from "../donnees/modele";
 import { CRITICITES } from "../donnees/modele";
 import { FILTRE_VIDE, type FiltreVue, type VueEnregistree } from "../donnees/prefs";
 import { useOptim, useUi } from "./contexte";
+import { ChoixRecherche, ListeCoches } from "./ListeCoches";
 
 type CleListe = "projets" | "statuts" | "responsables" | "types" | "criticites";
 const LIBELLES: Record<CleListe, string> = { projets: "Projets", statuts: "Statuts", responsables: "Responsables", types: "Types", criticites: "Criticité" };
@@ -55,8 +56,7 @@ function Choix({ cle, f, setF, ouvert, setOuvert }: { cle: CleListe; f: FiltreVu
     <span className="hx-fchip-w" ref={ref}>
       <button type="button" className={`hx-fchip ${sel.length ? "is-on" : ""}`} aria-expanded={ouvert} onClick={() => setOuvert(ouvert ? null : cle)}>{LIBELLES[cle]}{sel.length ? <> <b>{sel.length}</b></> : null} ▾</button>
       {ouvert && <div className="hx-pop is-f" role="dialog" aria-label={LIBELLES[cle]}>
-        {options.map(([id, l, c]) => <label key={id}><input type="checkbox" checked={sel.includes(id)} onChange={() => setF({ ...f, [cle]: sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id] })} />{c && <i style={{ background: c }} />}{l}</label>)}
-        <footer><button type="button" className="hx-more" onClick={() => setF({ ...f, [cle]: [] })}>Tout décocher</button></footer>
+        <ListeCoches options={options.map(([id, libelle, couleur]) => ({ id, libelle, couleur }))} choisis={sel} changer={(ids) => setF({ ...f, [cle]: ids })} libelleRecherche={`Rechercher : ${LIBELLES[cle].toLowerCase()}`} />
       </div>}
     </span>
   );
@@ -108,11 +108,8 @@ export function BarreFiltres({ ecran, n, masquer = [], email, reglages, applique
       <button type="button" className={`hx-fchip ${f.jalons ? "is-on" : ""}`} onClick={() => setF({ ...f, jalons: !f.jalons })}>Jalons</button>
       <button type="button" className={`hx-fchip ${f.terminees ? "is-on" : ""}`} onClick={() => setF({ ...f, terminees: !f.terminees })}>Terminées</button>
       <span className="hx-fviews"><span>Vue</span>
-        <select value={cur} aria-label="Vue enregistrée" onChange={(e) => (e.target.value ? choisir(e.target.value) : setVueActive(ecran, ""))}>
-          <option value="">— vue en cours (non enregistrée)</option>
-          <optgroup label="Prédéfinies">{PREDEFINIES.map((p) => <option key={p.id} value={`p:${p.id}`}>{p.nom}</option>)}</optgroup>
-          {mesVues.length > 0 && <optgroup label="Mes vues">{mesVues.map((v) => <option key={v.id} value={`u:${v.id}`}>{v.nom}</option>)}</optgroup>}
-        </select>
+        <ChoixRecherche libelle="Vue enregistrée" valeur={cur} vide="— vue en cours (non enregistrée)" changer={(v) => (v ? choisir(v) : setVueActive(ecran, ""))}
+          options={[...PREDEFINIES.map((p) => ({ id: `p:${p.id}`, libelle: p.nom, groupe: "Prédéfinies" })), ...mesVues.map((v) => ({ id: `u:${v.id}`, libelle: v.nom, groupe: "Mes vues" }))]} />
         {nom !== null
           ? <><input autoFocus value={nom} onChange={(e) => setNom(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void enregistrer(); if (e.key === "Escape") setNom(null); }} placeholder="Nom de la vue" aria-label="Nom de la vue" /><button type="button" className="hx-btn is-sm is-primary" onClick={() => void enregistrer()}>Enregistrer</button><button type="button" className="hx-more" onClick={() => setNom(null)}>Annuler</button></>
           : <><button type="button" className="hx-more" onClick={() => setNom("")}>+ Enregistrer la vue</button>{cur.startsWith("u:") && <button type="button" className="hx-more is-plain" onClick={() => void supprimer(cur.slice(2))}>Supprimer</button>}</>}

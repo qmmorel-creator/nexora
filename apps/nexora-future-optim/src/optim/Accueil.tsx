@@ -6,6 +6,7 @@ import { lignesFrise } from "../donnees/planning";
 import { santeProjet } from "../donnees/projet";
 import type { SyntheseBudget } from "../donnees/finance";
 import { dateCourte, hm, jourCourt, jourLong, majuscule, useOptim, useUi } from "./contexte";
+import { ListeCoches } from "./ListeCoches";
 import { formaterSante, mesureSante, MESURES_SANTE } from "../donnees/sante";
 import { resumeMetrique } from "../donnees/corps";
 import { LARGEURS_ACCUEIL, LARGEURS_ACCUEIL_MOYEN, MAX_MESURES_CARTE, placerTuiles, type TuileAccueil } from "../donnees/prefs";
@@ -100,14 +101,11 @@ function TuileCorps({ aller }: { aller: (ecran: string) => void }) {
     return <div key={k}><small>{m?.label || k}</small><b>{r.dernier ? formaterSante(r.dernier.v, m) : "—"}</b>
       {pts.length > 1 && <svg width="56" height="14" viewBox="0 0 56 14" aria-hidden="true"><polyline fill="none" stroke={st.couleur} strokeWidth="1.5" points={pts.map((v, i) => `${(i / (pts.length - 1) * 54 + 1).toFixed(1)},${(13 - (mx > mn ? (v - mn) / (mx - mn) : .5) * 12).toFixed(1)}`).join(" ")} /></svg>}</div>;
   };
-  const groupes = [...new Set(MESURES_SANTE.map((m) => m.group))];
-  const basculer = (k: string) => void ecrirePrefs({ accueil: { ...prefs.accueil, corps: sel.includes(k) ? sel.filter((x) => x !== k) : [...sel, k].slice(0, MAX_MESURES_CARTE) } });
   return (
     <section className="hx-tile hx-t-body"><header className="hx-th"><h2>Corps</h2>
       <span className="ox-rel"><button type="button" className="hx-more is-plain" aria-expanded={choix} onClick={() => setChoix(!choix)}>Données ▾</button>
         {choix && <div className="hx-pop" role="dialog" aria-label="Données affichées"><header><b>Données affichées · {sel.length} / {MAX_MESURES_CARTE}</b><button type="button" className="hx-x" aria-label="Fermer" onClick={() => setChoix(false)}>×</button></header>
-          <h4>Activité</h4><label className={!sel.includes("sport") && sel.length >= MAX_MESURES_CARTE ? "is-off" : ""}><input type="checkbox" checked={sel.includes("sport")} disabled={!sel.includes("sport") && sel.length >= MAX_MESURES_CARTE} onChange={() => basculer("sport")} />Sport de la semaine</label>
-          {groupes.map((g) => <div key={g}><h4>{g}</h4>{MESURES_SANTE.filter((m) => m.group === g).map((m) => { const on = sel.includes(m.key), off = !on && sel.length >= MAX_MESURES_CARTE; return <label key={m.key} className={off ? "is-off" : ""}><input type="checkbox" checked={on} disabled={off} onChange={() => basculer(m.key)} />{m.label}</label>; })}</div>)}
+          <ListeCoches options={[{ id: "sport", libelle: "Sport de la semaine", groupe: "Activité" }, ...MESURES_SANTE.map((m) => ({ id: m.key, libelle: m.label, groupe: m.group }))]} choisis={sel} max={MAX_MESURES_CARTE} libelleRecherche="Rechercher une mesure" changer={(ids) => void ecrirePrefs({ accueil: { ...prefs.accueil, corps: ids.slice(0, MAX_MESURES_CARTE) } })} />
           <p className="hx-hint">Choix synchronisé entre vos appareils.</p></div>}</span>
       <button type="button" className="hx-more" onClick={() => aller("corps")}>Ouvrir ›</button></header>
       <div className="hx-kpis is-2">{sel.map(kpi)}</div>

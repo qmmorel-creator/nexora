@@ -9,6 +9,7 @@ import { couleurSport, nomsSports, type Activite } from "../donnees/sport";
 import { resumeMetrique, seaux, serieMetrique, type Seau } from "../donnees/corps";
 import { GRANDEURS_SPORT, MAX_MESURES_CARTE, PERIODES_CORPS, REGROUPEMENTS, type CarteCorps, type GrandeurSport, type PrefsCorps, type RegroupementCorps } from "../donnees/prefs";
 import { dateCourte, hm, jourCourt, MOIS_C, semaineIso, useOptim } from "./contexte";
+import { ListeCoches } from "./ListeCoches";
 import { PhotosCorps } from "./PhotosCorps";
 import { styleMesure, useCorps } from "./corps-donnees";
 import { useActionsHabitudes, useJour } from "./jour";
@@ -78,16 +79,12 @@ export function EditeurCarte({ carte, releves, fermer, enregistrer }: { carte: C
   const [titre, setTitre] = useState(carte.titre);
   const [mesures, setMesures] = useState(carte.mesures);
   const avecDonnees = new Set(releves.flatMap((r) => Object.keys(r).filter((k) => typeof r[k] === "number")));
-  const groupes = [...new Set(MESURES_SANTE.map((m) => m.group))];
   const plein = mesures.length >= MAX_MESURES_CARTE;
   return (
     <div className="ox-editeur" role="dialog" aria-label={`Modifier la carte ${carte.titre}`}>
       <label className="ox-titre">Titre de la carte<input value={titre} maxLength={60} onChange={(e) => setTitre(e.target.value)} autoFocus /></label>
       <p className="hx-hint">Mesures affichées : {mesures.length} / {MAX_MESURES_CARTE}{plein ? " — décochez-en une pour en choisir une autre." : ""}</p>
-      <div className="ox-choix">{groupes.map((g) => <div key={g}><h4>{g}</h4>{MESURES_SANTE.filter((m) => m.group === g).map((m) => {
-        const on = mesures.includes(m.key);
-        return <label key={m.key} className={!on && plein ? "is-off" : ""}><input type="checkbox" checked={on} disabled={!on && plein} onChange={() => setMesures(on ? mesures.filter((x) => x !== m.key) : [...mesures, m.key])} />{m.label}{!avecDonnees.has(m.key) && <small className="hx-dim"> aucun relevé</small>}</label>;
-      })}</div>)}</div>
+      <ListeCoches options={MESURES_SANTE.map((m) => ({ id: m.key, libelle: m.label, groupe: m.group, detail: avecDonnees.has(m.key) ? undefined : "aucun relevé" }))} choisis={mesures} max={MAX_MESURES_CARTE} changer={setMesures} libelleRecherche="Rechercher une mesure" />
       <footer><button type="button" className="hx-btn is-ghost" onClick={fermer}>Annuler</button><button type="button" className="hx-btn is-primary" onClick={() => enregistrer({ ...carte, titre: titre.trim() || carte.titre, mesures })}>Enregistrer</button></footer>
     </div>
   );
@@ -127,7 +124,7 @@ function BlocSport({ activites: toutes, c, setReg, maj }: { activites: Activite[
   const semaine = activites.filter((a) => a.date >= lundi && a.date <= jour).reduce((t, a) => t + G.val(a), 0);
   const recentes = activites.filter((a) => a.date <= jour).slice(-6).reverse();
   return <>
-    <div className="ox-sports" role="group" aria-label="Sports affichés">{tousSports.map((k) => { const on = !masques.has(k); return <label key={k} className={`ox-toggle ${on ? "is-on" : ""}`} style={{ ["--c" as string]: couleurSport(k, ordre) }}><input type="checkbox" checked={on} onChange={() => maj({ sportsMasques: on ? [...c.sportsMasques, k] : c.sportsMasques.filter((x) => x !== k) })} /><i />{k}</label>; })}
+    <div className="ox-sports" role="group" aria-label="Sports affichés"><button type="button" className="hx-more" disabled={!masques.size} onClick={() => maj({ sportsMasques: [] })}>Tout cocher</button><button type="button" className="hx-more" disabled={masques.size === tousSports.length} onClick={() => maj({ sportsMasques: [...tousSports] })}>Tout décocher</button>{tousSports.map((k) => { const on = !masques.has(k); return <label key={k} className={`ox-toggle ${on ? "is-on" : ""}`} style={{ ["--c" as string]: couleurSport(k, ordre) }}><input type="checkbox" checked={on} onChange={() => maj({ sportsMasques: on ? [...c.sportsMasques, k] : c.sportsMasques.filter((x) => x !== k) })} /><i />{k}</label>; })}
       <span className="ox-sp" /><div className="hx-seg is-xs" role="group" aria-label="Grandeur">{GRANDEURS_SPORT.map((g) => <button key={g} type="button" aria-pressed={c.grandeurSport === g} onClick={() => maj({ grandeurSport: g })}>{GRANDEUR[g].lib}</button>)}</div></div>
     <div className="hx-mrow2"><div className="hx-mhd"><small>Sport · {G.lib.toLowerCase()}</small><b>{G.fmt(semaine)}{objSemaine > 0 && <span className="hx-dim"> / {d.objectifsSport.weeklyHours} h</span>}</b><span className="hx-dim">cette semaine</span>
       <div className="hx-seg is-xs">{REGROUPEMENTS.map((r) => <button key={r} type="button" aria-pressed={mode === r} onClick={() => setReg(r)}>{LIB_REG[r]}</button>)}</div></div>
