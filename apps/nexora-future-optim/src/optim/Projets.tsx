@@ -6,7 +6,7 @@ import { useState, type ReactNode } from "react";
 import { ajouterJours, CRITICITES, ecartJours, type Tache } from "../donnees/modele";
 import { comparaison, libelleEcart, lignesFrise, type Comparaison } from "../donnees/planning";
 import { santeProjet } from "../donnees/projet";
-import { GROUPES_PROJET, REFERENCES, type GroupeProjet, type Reference, type VueEnregistree, type Zoom } from "../donnees/prefs";
+import { COLONNES_PROJET, GROUPES_PROJET, REFERENCES, type ColonneProjet, type GroupeProjet, type Reference, type VueEnregistree, type Zoom } from "../donnees/prefs";
 import { dateCourte, initiales, useOptim, useUi } from "./contexte";
 import { BarreFiltres, useFiltrage } from "./filtres";
 import { BarreProjet, clairsemer, Grille, graduations, infobulle, plage, tx } from "./frise";
@@ -14,7 +14,9 @@ import { AideStyle, BarreZoom, SelecteurStyle } from "./Planning";
 import { Coche } from "./jour";
 import { FriseProjet } from "./FriseProjet";
 
-export const ZOOMS_PROJET: Zoom[] = ["mois", "trimestre", "annee", "pluri"];
+export const ZOOMS_PROJET: Zoom[] = ["jour", "semaine", "mois", "trimestre", "annee", "pluri"];
+// Colonnes du planning détaillé (retour du 03/10/2026) : libellé, en-tête et largeur.
+const COLONNES: Record<ColonneProjet, { libelle: string; largeur: string }> = { resp: { libelle: "Responsable", largeur: "36px" }, debut: { libelle: "Début", largeur: "58px" }, fin: { libelle: "Fin", largeur: "58px" }, ref: { libelle: "Référence", largeur: "58px" }, derive: { libelle: "Dérive", largeur: "52px" } };
 export const LIB_GROUPE: Record<GroupeProjet, string> = { aucun: "Aucun", statut: "Statut", responsable: "Responsable", type: "Type", criticite: "Criticité", echeance: "Échéance", jalon: "Tâche / jalon" };
 export const LIB_REF: Record<Reference, string> = { aucune: "Aucune", courante: "Référence courante", initiale: "Plan initial" };
 
@@ -35,6 +37,9 @@ export function Projets({ projetId, email, ouvrirProjet }: { projetId: string | 
   const p = projet(projetId && d.projets.some((x) => x.id === projetId) ? projetId : d.projets[0]?.id);
   if (!p.id) return <main className="hx-main"><p className="hx-empty">Aucun projet dans Nexora.</p></main>;
   const { zoom, groupe, reference } = prefs.projets, style = prefs.gantt;
+  const colonnes = prefs.projets.colonnes, voir = Object.fromEntries(COLONNES_PROJET.map((k) => [k, colonnes.includes(k)])) as Record<ColonneProjet, boolean>;
+  const gabarit = ["minmax(200px, 1.3fr)", ...COLONNES_PROJET.filter((k) => voir[k]).map((k) => COLONNES[k].largeur), "minmax(380px, 3fr)"].join(" ");
+  const choisirColonnes = (l: ColonneProjet[]) => void ecrirePrefs({ projets: { ...prefs.projets, colonnes: COLONNES_PROJET.filter((k) => l.includes(k)) } });
   const r = plage(zoom, decalage, jour);
   const dossier = d.dossiers.find((f) => f.id === (p.folderId || "folder-a-trier"));
   const toutes = d.taches.filter((t) => t.projectId === p.id);
@@ -70,11 +75,11 @@ export function Projets({ projetId, email, ouvrirProjet }: { projetId: string | 
     return (
       <div key={t.id} className={`hx-prw ${tacheId === t.id ? "is-sel" : ""} ${fini(t) ? "is-done" : ""}`}>
         <span className="hx-gname"><Coche t={t} /><button type="button" onClick={() => ouvrir(t.id)}>{t.milestone ? "◆ " : ""}{t.title}</button></span>
-        <span className="hx-dim" title={t.assignee}>{initiales(t.assignee)}</span>
-        <span className="hx-num">{dateCourte(t.milestone ? t.end : t.start)}</span>
-        <span className={`hx-num ${retard(t) ? "hx-red" : ""}`}>{dateCourte(t.end)}</span>
-        <span className="hx-num hx-dim">{c ? dateCourte(c.referenceEnd) : "—"}</span>
-        <span className="hx-num">{cellEcart(c?.ecartFin ?? null)}</span>
+        {voir.resp && <span className="hx-dim" title={t.assignee}>{initiales(t.assignee)}</span>}
+        {voir.debut && <span className="hx-num">{dateCourte(t.milestone ? t.end : t.start)}</span>}
+        {voir.fin && <span className={`hx-num ${retard(t) ? "hx-red" : ""}`}>{dateCourte(t.end)}</span>}
+        {voir.ref && <span className="hx-num hx-dim">{c ? dateCourte(c.referenceEnd) : "—"}</span>}
+        {voir.derive && <span className="hx-num">{cellEcart(c?.ecartFin ?? null)}</span>}
         <div className="hx-ptl" data-rs={r.debut} data-rn={r.jours}><Grille r={r} jour={jour} />{piste}</div>
       </div>
     );
@@ -112,11 +117,15 @@ export function Projets({ projetId, email, ouvrirProjet }: { projetId: string | 
                 <div className="hx-cmpbar">{ecarts.slice().sort((a, b) => b - a).map((x, i) => <i key={i} className={x > 0 ? "is-late" : x < 0 ? "is-early" : ""} style={{ height: `${Math.min(100, 12 + Math.abs(x) * 4)}%` }} title={libelleEcart(x)} />)}</div>
               </div>}
         </section>
-        <div className="hx-pbarrow"><BarreZoom r={r} zooms={ZOOMS_PROJET} setZoom={(z) => { void ecrirePrefs({ projets: { ...prefs.projets, zoom: z } }); setDecalage(0); }} decaler={(n) => setDecalage(n === null ? 0 : decalage + n)} />
+        <div className="hx-pbarrow"><details className="ox-cols"><summary className="hx-btn is-sm">Colonnes ▾</summary>
+          <div className="ox-cols-menu" role="group" aria-label="Colonnes affichées">
+            <p><button type="button" className="hx-more" onClick={() => choisirColonnes([...COLONNES_PROJET])}>Tout cocher</button><button type="button" className="hx-more" onClick={() => choisirColonnes([])}>Tout décocher</button></p>
+            {COLONNES_PROJET.map((k) => <label key={k}><input type="checkbox" checked={voir[k]} onChange={() => choisirColonnes(voir[k] ? colonnes.filter((x) => x !== k) : [...colonnes, k])} />{COLONNES[k].libelle}</label>)}
+          </div></details><BarreZoom r={r} zooms={ZOOMS_PROJET} setZoom={(z) => { void ecrirePrefs({ projets: { ...prefs.projets, zoom: z } }); setDecalage(0); }} decaler={(n) => setDecalage(n === null ? 0 : decalage + n)} />
           <div className="hx-opts"><span>Grouper par</span><div className="hx-seg is-sm">{GROUPES_PROJET.map((g) => <button key={g} type="button" aria-pressed={groupe === g} onClick={() => { void ecrirePrefs({ projets: { ...prefs.projets, groupe: g } }); setReplies(new Set()); }}>{LIB_GROUPE[g]}</button>)}</div></div><SelecteurStyle /></div>
         <BarreFiltres ecran="projets" n={ts.length} masquer={["projets"]} email={email} reglages={{ zoom, groupe, style, reference }} appliquerReglages={appliquer} />
-        <div className="hx-tile hx-pgantt">
-          <div className="hx-prw hx-prh"><span>Tâche</span><span>Resp.</span><span>Début</span><span>Fin</span><span>{reference === "initiale" ? "Initiale" : "Réf."}</span><span>Dérive</span><div className="hx-ptl">{clairsemer(graduations(r), 7).map((k) => <b key={k.iso} className={`hx-tick ${k.majeur ? "is-major" : ""}`} style={{ left: `${tx(r, k.iso)}%` }}>{k.libelle}</b>)}</div></div>
+        <div className="hx-tile hx-pgantt" style={{ ["--pcols" as string]: gabarit }}>
+          <div className="hx-prw hx-prh"><span>Tâche</span>{voir.resp && <span title="Responsable">Resp.</span>}{voir.debut && <span>Début</span>}{voir.fin && <span>Fin</span>}{voir.ref && <span>{reference === "initiale" ? "Initiale" : "Réf."}</span>}{voir.derive && <span>Dérive</span>}<div className="hx-ptl">{clairsemer(graduations(r), 7).map((k) => <b key={k.iso} className={`hx-tick ${k.majeur ? "is-major" : ""}`} style={{ left: `${tx(r, k.iso)}%` }}>{k.libelle}</b>)}</div></div>
           {groupes.map((g) => {
             if (!g.id) return g.taches.map(ligne);
             const col = replies.has(g.id), nRet = g.taches.filter(retard).length, ouv = g.taches.filter((t) => !fini(t)).length;
@@ -126,7 +135,7 @@ export function Projets({ projetId, email, ouvrirProjet }: { projetId: string | 
             return [
               <div key={g.id} className="hx-prw hx-pgrp">
                 <button type="button" className="hx-gname" aria-expanded={!col} onClick={() => setReplies((s) => { const n = new Set(s); if (n.has(g.id)) n.delete(g.id); else n.add(g.id); return n; })}><span className="hx-chev">{col ? "▸" : "▾"}</span><i style={{ background: g.couleur }} /><b>{g.libelle}</b><small>{g.taches.length} tâche{g.taches.length > 1 ? "s" : ""}{ouv !== g.taches.length && <> · {ouv} ouverte{ouv > 1 ? "s" : ""}</>}{nRet > 0 && <> · <em>{nRet} en retard</em></>}</small></button>
-                <span /><span className="hx-num hx-dim">{dates.length ? dateCourte(g0) : "—"}</span><span className="hx-num hx-dim">{dates.length ? dateCourte(g1) : "—"}</span><span /><span />
+                {voir.resp && <span />}{voir.debut && <span className="hx-num hx-dim">{dates.length ? dateCourte(g0) : "—"}</span>}{voir.fin && <span className="hx-num hx-dim">{dates.length ? dateCourte(g1) : "—"}</span>}{voir.ref && <span />}{voir.derive && <span />}
                 <div className="hx-ptl"><Grille r={r} jour={jour} />{b > a && <span className="hx-lsum" style={{ left: `${a}%`, width: `${b - a}%`, ["--c" as string]: g.couleur }} />}</div>
               </div>,
               ...(col ? [] : g.taches.map(ligne)),

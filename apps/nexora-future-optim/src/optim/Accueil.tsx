@@ -66,7 +66,7 @@ function BandeauArgent({ ouvrir }: { ouvrir: () => void }) {
   }, [source, jour]);
   const jourMois = Number(jour.slice(8)), nbJours = new Date(Date.UTC(+jour.slice(0, 4), +jour.slice(5, 7), 0)).getUTCDate();
   return (
-    <section className="hx-tile hx-t-money"><header className="hx-th"><h2>Argent <small>{majuscule(new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${jour.slice(0, 7)}-01T12:00:00Z`)))}</small></h2><button type="button" className="hx-more" onClick={ouvrir}>Ouvrir ›</button></header>
+    <section className="hx-tile hx-t-money"><header className="hx-th"><h2>Suivi du budget <small>{majuscule(new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${jour.slice(0, 7)}-01T12:00:00Z`)))}</small></h2><button type="button" className="hx-more" onClick={ouvrir}>Ouvrir ›</button></header>
       {!s ? <p className="hx-dim">{erreur ? `Budget indisponible pour l'instant (${erreur}). Il arrive avec le lot Argent.` : "Chargement du budget…"}</p> : (
         <div className="hx-mstrip">
           <div><small>Reste à dépenser</small><b>{euro(s.totals.remaining)}</b><span className="hx-dim">{euro(s.totals.remaining / Math.max(1, nbJours - jourMois + 1))}/jour</span></div>

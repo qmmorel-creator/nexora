@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ajouterJours, type Tache } from "../donnees/modele";
 import { lignesFrise } from "../donnees/planning";
-import { GROUPES_PLANNING, ZOOMS, type GroupePlanning, type StyleGantt, type VueEnregistree, type Zoom } from "../donnees/prefs";
+import { GROUPES_PLANNING, ZOOMS_PLANNING, type GroupePlanning, type StyleGantt, type VueEnregistree, type Zoom } from "../donnees/prefs";
 import { useOptim, useUi } from "./contexte";
 import { BarreFiltres, useFiltrage } from "./filtres";
 import { Grille, graduations, HAUTEUR_RANGEE, infobulle, libellePlage, LigneGantt, plage, ranger, STYLES_DEF, tx, ZOOMS_DEF, type Plage } from "./frise";
@@ -72,7 +72,7 @@ export function Planning({ email, allerJournee, ouvrirProjet }: { email: string;
   return (
     <main className="hx-main" data-scroll>
       <div className="hx-hello hx-row"><div><h1>Planning</h1></div>
-        <BarreZoom r={r} zooms={ZOOMS} setZoom={(z) => { void ecrirePrefs({ planning: { ...prefs.planning, zoom: z } }); setDecalage(0); }} decaler={(n) => setDecalage(n === null ? 0 : decalage + n)} jour={allerJournee} />
+        <BarreZoom r={r} zooms={ZOOMS_PLANNING} setZoom={(z) => { void ecrirePrefs({ planning: { ...prefs.planning, zoom: z } }); setDecalage(0); }} decaler={(n) => setDecalage(n === null ? 0 : decalage + n)} jour={allerJournee} />
         <div className="hx-opts"><span>Grouper par</span><div className="hx-seg is-sm">{GROUPES_PLANNING.map((g) => <button key={g} type="button" aria-pressed={groupe === g} onClick={() => void ecrirePrefs({ planning: { ...prefs.planning, groupe: g } })}>{LIBELLE_GROUPE[g]}</button>)}</div><SelecteurStyle /></div></div>
       <BarreFiltres ecran="planning" n={ts.length} email={email} reglages={{ zoom, groupe, style }} appliquerReglages={appliquer} />
       <div className="hx-tile hx-tl" ref={ref}>

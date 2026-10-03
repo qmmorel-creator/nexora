@@ -170,9 +170,9 @@ function OngletPatrimoine({ cle }: { cle: number }) {
     </div>
       <section className="hx-tile hx-wevo"><header className="hx-th"><h2>Évolution sur {N} mois <small>par type de compte</small></h2><span className="hx-sleg">{types.map((t) => <span key={t.type}><i style={{ background: t.couleur }} />{t.type}</span>)}</span>
         <div className="hx-seg is-xs" title="Durée, aussi réglable dans les réglages">{DUREES_PATRIMOINE.map((d) => <button key={d} type="button" aria-pressed={N === d} onClick={() => void ecrirePrefs({ argent: { ...prefs.argent, patrimoineMois: d } })}>{d} mois</button>)}</div></header>{graphique}</section></div>
+    <section className="hx-tile ox-pat-sankey"><header className="hx-th"><h2>Structure du patrimoine</h2><small className="hx-dim">type › banque › compte · Sankey de Nexora</small></header>
+        {construit ? <div className="ox-nexora ox-sankey is-grand"><FinanceSankeyChart graph={construit.graph} config={config} title="Structure du patrimoine (Sankey)" period={construit.period} /></div> : <Etat erreur={sankey.erreur} />}</section>
     <div className="hx-acols">
-      <section className="hx-tile"><header className="hx-th"><h2>Structure du patrimoine</h2><small className="hx-dim">type › banque › compte · Sankey de Nexora</small></header>
-        {construit ? <div className="ox-nexora ox-sankey is-petit"><FinanceSankeyChart graph={construit.graph} config={config} title="Structure du patrimoine (Sankey)" period={construit.period} /></div> : <Etat erreur={sankey.erreur} />}</section>
       <section className="hx-tile"><header className="hx-th"><h2>Comptes</h2></header>
         {!comptes.length ? <Etat erreur={resume.erreur} texte={resume.charge ? "Aucun compte." : "Chargement…"} /> : (() => {
           const tot = comptes.reduce((s, a) => s + a.balance, 0), groupes = [...new Set(comptes.map((a) => a.type || "Autre"))];
@@ -282,7 +282,7 @@ export function Argent() {
   const rafraichir = () => { cache.clear(); setCle((c) => c + 1); };
   return (
     <main className="hx-main hx-argent" data-scroll>
-      <div className="hx-hello hx-row"><div><h1>Argent</h1><p>Budget personnel (KDM360), patrimoine et activité pro. Côté budget, la seule écriture possible reste le classement d'une opération, comme dans Nexora.</p></div>
+      <div className="hx-hello hx-row"><div><h1>Suivi du budget</h1><p>Budget personnel (KDM360), patrimoine et activité pro. Côté budget, la seule écriture possible reste le classement d'une opération, comme dans Nexora.</p></div>
         <div className="hx-tabs">{ONGLETS_ARGENT.map((o) => <button key={o} type="button" aria-selected={onglet === o} onClick={() => void ecrirePrefs({ argent: { ...prefs.argent, onglet: o } })}>{LIB_ONGLET[o]}</button>)}</div></div>
       {onglet === "mois" && <OngletPeriode rafraichir={rafraichir} cle={cle} />}
       {onglet === "patrimoine" && <OngletPatrimoine cle={cle} />}

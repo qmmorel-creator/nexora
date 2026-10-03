@@ -64,4 +64,12 @@ describe("accueil : contenu des blocs (retour du 03/10/2026)", () => {
     expect(a.journee).toEqual({ cadran: false, aujourdhui: true, rattraper: true, lignes: 8, calendriers: true });
     expect(a.semaine).toEqual({ jours: 14, debut: "lundi", calendriers: true, retards: false, terminees: false, jalonsSeuls: false, projets: ["p1"] });
   });
+  it("projets : colonnes au choix et zooms Jour / Semaine ; le planning n'a pas de zoom Jour", () => {
+    expect(normaliserPrefs({}).projets.colonnes).toEqual(["resp", "debut", "fin", "ref", "derive"]);
+    expect(normaliserPrefs({ projets: { colonnes: ["derive", "x", "debut"] } }).projets.colonnes).toEqual(["debut", "derive"]);
+    expect(normaliserPrefs({ projets: { colonnes: [] } }).projets.colonnes).toEqual([]);
+    expect(normaliserPrefs({ projets: { zoom: "jour" } }).projets.zoom).toBe("jour");
+    expect(normaliserPrefs({ planning: { zoom: "jour" } }).planning.zoom).toBe("mois");
+    expect(normaliserPrefs({ planning: { zoom: "semaine" } }).planning.zoom).toBe("semaine");
+  });
 });
