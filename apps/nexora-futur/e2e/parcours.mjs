@@ -350,6 +350,31 @@ try {
   await page.getByRole("radio", { name: "Banque", exact: true }).first().click();
   await capture("19-finances-patrimoine");
 
+  etape = "finances : graphiques, cumul, flux, pro, burn rate"; console.log("→", etape);
+  await page.getByRole("radio", { name: "Graphiques" }).click();
+  const cascade = page.getByRole("list", { name: /^Cascade/ });
+  await cascade.getByText("Solde net").waitFor();
+  assert.ok(await cascade.getByText("À classer").count() === 0, "l'opération catégorisée a quitté « À classer »");
+  await page.getByLabel("Mode du cumul").selectOption("categories");
+  await page.getByRole("img", { name: /^Cumul Par catégorie/ }).waitFor();
+  await page.getByLabel("Mode du cumul").selectOption("multiples");
+  await page.locator(".fi-multiple", { hasText: "Logement" }).waitFor();
+  await page.getByRole("radio", { name: "Flux", exact: true }).click();
+  await page.getByRole("img", { name: /^Flux : \d+ liaisons$/ }).waitFor();
+  await page.getByRole("radiogroup", { name: "Type de flux" }).getByRole("radio", { name: "Patrimoine" }).click();
+  await page.getByRole("img", { name: /^Flux : / }).waitFor();
+  await capture("20-finances-flux");
+  await page.getByRole("radio", { name: /^Pro :/ }).click();
+  assert.match(await page.locator(".sy-carte", { hasText: "CA signé" }).textContent(), /13\s500,00/);
+  await page.getByRole("region", { name: "Échéances de facturation" }).getByText("Fin des études").waitFor();
+  await page.getByRole("radio", { name: /^Devis/ }).click();
+  await page.getByRole("row", { name: /2026-005.*Expiré/ }).waitFor();
+  await page.getByRole("radio", { name: /^Factures/ }).click();
+  await page.getByRole("row", { name: /F-2026-008.*En retard/ }).waitFor();
+  await capture("21-finances-pro");
+  await page.goto(`http://127.0.0.1:${PORT}/projets/p-ctex6`);
+  await page.getByRole("region", { name: "Budget du projet" }).getByText("Rythme (burn rate)").waitFor();
+
   etape = "mode sombre"; console.log("→", etape);
   await page.goto(`http://127.0.0.1:${PORT}/projets/p-ctex6?t=t2`);
   await page.getByRole("complementary", { name: /Fiche : PV Contrôles DREAL/ }).waitFor();

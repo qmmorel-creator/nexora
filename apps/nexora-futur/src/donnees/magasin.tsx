@@ -13,6 +13,9 @@ import { ajouterAuJournal, entreesJournal, type EntreeJournal } from "./journal"
 import { normaliserPrefs, type PrefsFutur } from "./prefs";
 import type { Baselines } from "./planning";
 import { notesTableaux, type NoteTableau } from "./notes";
+import type { Client, DepensePro, Devis, Facture, LigneFacturation, MissionPro, Paiement, ReglagesPro, TempsPro } from "./finance-pro";
+
+export interface DonneesPro { devis: Devis[]; clients: Client[]; factures: Facture[]; missions: MissionPro[]; temps: TempsPro[]; depenses: DepensePro[]; echeancier: LigneFacturation[]; paiements: Paiement[]; reglages: ReglagesPro; }
 import type { Activite, Depense } from "./projet";
 
 export const CLES = {
@@ -23,6 +26,10 @@ export const CLES = {
   depenses: "nexora:expenses", journal: "nexora:activityLog", equipes: "nexora:teams",
   prefs: "nexora:futurPrefs", references: "nexora:taskBaselines",
   tableaux: "nexora:dashboards", accueil: "nexora:todayWidgets",
+  // Finance PRO, devis, factures : lecture seule (#659).
+  devis: "nexora:quotes", clients: "nexora:quoteClients", factures: "nexora:invoices", missions: "nexora:proMissions",
+  temps: "nexora:proTimeEntries", depensesPro: "nexora:proExpenses", echeancier: "nexora:proBillingSchedule", paiements: "nexora:proPayments",
+  reglagesPro: "nexora:financeProSettings",
 } as const;
 type NomCle = keyof typeof CLES;
 
@@ -34,7 +41,7 @@ export interface Favori { type: "project" | "view" | "dashboard" | "task"; id: s
 export interface Donnees extends Catalogues {
   dossiers: Dossier[]; taches: Tache[]; archive: Tache[]; favoris: Favori[]; metaFiltres: Filtres;
   defauts: Defauts; modeles: Modele[]; raccourcis: Record<string, string>;
-  themesHabitudes: ThemeHabitudes[]; journalHabitudes: EntreeHabitude[]; nonApplicables: NonApplicable[]; prefs: PrefsFutur; references: Baselines; notes: NoteTableau[];
+  themesHabitudes: ThemeHabitudes[]; journalHabitudes: EntreeHabitude[]; nonApplicables: NonApplicable[]; prefs: PrefsFutur; references: Baselines; notes: NoteTableau[]; pro: DonneesPro;
   depenses: Depense[]; journal: Activite[]; equipes: { id: string; name?: string; color?: string }[];
   etats: Record<NomCle, EtatCle>; charge: boolean; aujourdhui: string;
 }
@@ -125,6 +132,12 @@ export function FournisseurDonnees({ children, source }: { children: ReactNode; 
       journalHabitudes: normaliserJournal(parse<unknown>(etats.journalHabitudes, CLES.journalHabitudes, [])),
       nonApplicables: normaliserNonApplicables(parse<unknown>(etats.nonApplicables, CLES.nonApplicables, [])),
       prefs: normaliserPrefs(parse<unknown>(etats.prefs, CLES.prefs, null)),
+      pro: {
+        devis: parse<Devis[]>(etats.devis, CLES.devis, []), clients: parse<Client[]>(etats.clients, CLES.clients, []), factures: parse<Facture[]>(etats.factures, CLES.factures, []),
+        missions: parse<MissionPro[]>(etats.missions, CLES.missions, []), temps: parse<TempsPro[]>(etats.temps, CLES.temps, []), depenses: parse<DepensePro[]>(etats.depensesPro, CLES.depensesPro, []),
+        echeancier: parse<LigneFacturation[]>(etats.echeancier, CLES.echeancier, []), paiements: parse<Paiement[]>(etats.paiements, CLES.paiements, []),
+        reglages: (() => { const v = parse<unknown>(etats.reglagesPro, CLES.reglagesPro, {}); return v && typeof v === "object" && !Array.isArray(v) ? (v as ReglagesPro) : {}; })(),
+      },
       notes: notesTableaux(parse<unknown>(etats.tableaux, CLES.tableaux, []), parse<unknown>(etats.accueil, CLES.accueil, null)),
       references: (() => { const v = parse<unknown>(etats.references, CLES.references, {}); return v && typeof v === "object" && !Array.isArray(v) ? (v as Baselines) : {}; })(),
       depenses: parse<Depense[]>(etats.depenses, CLES.depenses, []), journal: parse<Activite[]>(etats.journal, CLES.journal, []),

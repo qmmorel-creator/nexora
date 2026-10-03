@@ -9,8 +9,13 @@ import {
 } from "../donnees/finance";
 import { Bouton, Cartouche, Etat, Segment, Surtitre } from "../composants";
 import { useNotifier } from "./Notifications";
+import { CumulBudget, FluxBudget, GraphiquesBudget } from "./FinancesGraphiques";
+import { FinancesPro } from "./FinancesPro";
+import type { DonneesPro } from "../donnees/magasin";
+import type { Projet } from "../donnees/modele";
+import type { Graphes } from "../donnees/finance-graphes";
 
-type Onglet = "synthese" | "categoriser" | "transactions" | "patrimoine";
+type Onglet = "synthese" | "graphiques" | "flux" | "categoriser" | "transactions" | "patrimoine";
 
 function useLecture<T>(finance: AccesFinance | undefined, ressource: RessourceFinance, params: Record<string, string> | null, version: number) {
   const [etat, setEtat] = useState<{ donnees: T | null; erreur: string | null; charge: boolean }>({ donnees: null, erreur: null, charge: false });
@@ -185,8 +190,9 @@ function Patrimoine({ s, finance, jour, version }: { s: SyntheseBudget; finance:
   );
 }
 
-export function PageFinancesKdm({ finance, jour }: { finance: AccesFinance | undefined; jour: string }) {
+export function PageFinancesKdm({ finance, jour, pro, projets }: { finance: AccesFinance | undefined; jour: string; pro: DonneesPro; projets: Projet[] }) {
   const notifier = useNotifier();
+  const [univers, setUnivers] = useState<"perso" | "pro">("perso");
   const [onglet, setOnglet] = useState<Onglet>("synthese");
   const [mois, setMois] = useState(jour.slice(0, 7));
   const [version, setVersion] = useState(0);
@@ -195,7 +201,9 @@ export function PageFinancesKdm({ finance, jour }: { finance: AccesFinance | und
   const courant = useLecture<SyntheseBudget>(finance, "budget-summary", mois === jour.slice(0, 7) ? null : { month: jour.slice(0, 7) }, version);
   const file = (mois === jour.slice(0, 7) ? s.donnees : courant.donnees)?.toCategorize || [];
   const tx = useLecture<DonneesTransactions>(finance, "transactions-data", onglet === "transactions" ? {} : null, version);
-  if (!finance) return <div className="espace"><Cartouche surtitre="Espace Finances" titre="Budget" /><p className="discret">Budget indisponible dans cette session.</p></div>;
+  const bascule = <Segment etiquette="Univers financier" valeur={univers} onChange={setUnivers} options={[{ valeur: "perso", libelle: "Budget perso (KDM360)" }, { valeur: "pro", libelle: "Pro : devis, factures, Finance PRO" }]} />;
+  if (univers === "pro") return <div className="espace finances"><Cartouche surtitre="Espace Finances" titre="Activité pro" meta={<span>lecture seule</span>} />{bascule}<FinancesPro pro={pro} projets={projets} jour={jour} /></div>;
+  if (!finance) return <div className="espace finances"><Cartouche surtitre="Espace Finances" titre="Budget" />{bascule}<p className="discret">Budget indisponible dans cette session.</p></div>;
   const categoriser = async (x: ACategoriser, category: string, subcategory: string | null) => {
     try {
       await finance.categoriser({ transactionId: x.id, category, subcategory, idempotencyKey: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}` });
@@ -207,8 +215,9 @@ export function PageFinancesKdm({ finance, jour }: { finance: AccesFinance | und
     <div className="espace finances">
       <Cartouche surtitre="Espace Finances" titre="Budget personnel" meta={<><span>source : KDM360, via nexora-project</span><span>écriture : catégorisation seulement</span></>}
         actions={<Bouton variante="discret" onClick={() => setVersion((v) => v + 1)}>Actualiser</Bouton>} />
+      {bascule}
       <Segment etiquette="Vue Finances" valeur={onglet} onChange={setOnglet}
-        options={[{ valeur: "synthese", libelle: "Synthèse" }, { valeur: "categoriser", libelle: `À catégoriser${file.length ? ` (${file.length})` : ""}` }, { valeur: "transactions", libelle: "Transactions" }, { valeur: "patrimoine", libelle: "Patrimoine" }]} />
+        options={[{ valeur: "synthese", libelle: "Synthèse" }, { valeur: "graphiques", libelle: "Graphiques" }, { valeur: "flux", libelle: "Flux" }, { valeur: "categoriser", libelle: `À catégoriser${file.length ? ` (${file.length})` : ""}` }, { valeur: "transactions", libelle: "Transactions" }, { valeur: "patrimoine", libelle: "Patrimoine" }]} />
       {s.erreur ? <Erreur code={s.erreur} /> : !s.charge || !s.donnees ? <Chargement /> : (
         <>
           {onglet === "synthese" && <Synthese s={s.donnees} mois={mois} setMois={setMois} finance={finance} jour={jour} version={version} />}
@@ -220,6 +229,11 @@ export function PageFinancesKdm({ finance, jour }: { finance: AccesFinance | und
             </section>
           )}
           {onglet === "transactions" && (tx.erreur ? <Erreur code={tx.erreur} /> : !tx.charge || !tx.donnees ? <Chargement /> : <Transactions d={tx.donnees} />)}
+          {onglet === "graphiques" && (s.donnees.charts ? <>
+            <div className="sy-tete"><Bouton variante="discret" aria-label="Mois précédent" onClick={() => setMois(decalerMois(mois, -1))}>←</Bouton><strong>{libelleMois(mois)}</strong><Bouton variante="discret" aria-label="Mois suivant" onClick={() => setMois(decalerMois(mois, 1))}>→</Bouton></div>
+            <GraphiquesBudget c={s.donnees.charts as unknown as Graphes} mois={mois} /><CumulBudget c={s.donnees.charts as unknown as Graphes} mois={mois} />
+          </> : <p className="discret">Graphiques absents de la réponse.</p>)}
+          {onglet === "flux" && <FluxBudget finance={finance} jour={jour} version={version} />}
           {onglet === "patrimoine" && <Patrimoine s={s.donnees} finance={finance} jour={jour} version={version} />}
         </>
       )}

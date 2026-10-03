@@ -60,7 +60,7 @@ export function Bande({ actif, d, budget }: { actif: Espace; d: Donnees; budget:
 
 export function NavEspace({ espace }: { espace: Espace }) {
   const LOTS: Record<string, [string, string][]> = {
-    finances: [["Synthèse, période libre", "disponible"], ["À catégoriser, transactions", "disponible"], ["Patrimoine", "disponible"], ["Graphiques budget, cumul, flux", "lot 6b · #659"], ["Devis, factures, Finance PRO", "lot 6b · #659"]],
+    finances: [["Synthèse, période libre", "disponible"], ["À catégoriser, transactions", "disponible"], ["Patrimoine", "disponible"], ["Graphiques budget, cumul, flux", "disponible"], ["Devis, factures, Finance PRO", "lecture seule"]],
     corps: [["Habitudes (12 semaines)", "disponible"], ["Cocher les habitudes", "disponible"], ["Sport, santé, photos", "lot 7 · #660"]],
     equipe: [["Charge par personne", "disponible"], ["Charge du personnel, organigramme", "lot 7 · #660"]],
   };

@@ -3,6 +3,7 @@
 // (Ref #669), avec repli sur l'ancienne préférence locale du lot 4.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useDonnees, type Donnees } from "../donnees/magasin";
+import { burnRate } from "../donnees/finance-pro";
 import { fusionnerPrefs, type PrefsPageProjet } from "../donnees/prefs";
 import { ecartJours, estTerminee, type Projet, type Tache } from "../donnees/modele";
 import { budgetProjet, chargeParPersonne, documentsProjet, friseProjet, journalProjet, prochainesEtapes, reunionsProjet, risquesProjet, santeProjet } from "../donnees/projet";
@@ -47,6 +48,7 @@ export function PageProjet({ d, projet, selection, onOuvrir, onBasculer, lentill
   const frise = useMemo(() => friseProjet(d.taches, id, d, jour), [d, id, jour]);
   const reunions = useMemo(() => reunionsProjet(d.taches, id, d, jour), [d, id, jour]);
   const budget = useMemo(() => budgetProjet(projet as never, d.depenses, id), [projet, d.depenses, id]);
+  const rythme = useMemo(() => burnRate(budget.actuel, d.depenses.filter((e) => e.projectId === id), jour), [budget.actuel, d.depenses, id, jour]);
   const docs = useMemo(() => documentsProjet(d.taches, id), [d.taches, id]);
   const equipe = useMemo(() => chargeParPersonne(d.taches, d, jour, (t) => t.projectId === id || t.secondaryProjectId === id).filter((c) => c.ouvertes > 0), [d, id, jour]);
   const risques = useMemo(() => risquesProjet(d.taches, id, d, jour), [d, id, jour]);
@@ -91,6 +93,7 @@ export function PageProjet({ d, projet, selection, onOuvrir, onBasculer, lentill
           <div><dt>Consommé ({budget.pct} %)</dt><dd className={`mono ${budget.pct > 100 ? "crit" : ""}`}>{euros(budget.consomme)}</dd></div>
           <div><dt>Engagé · facturé · payé</dt><dd className="mono">{euros(budget.engagee)} · {euros(budget.facturee)} · {euros(budget.payee)}</dd></div>
           <div><dt>Reste</dt><dd className={`mono ${budget.reste < 0 ? "crit" : ""}`}>{euros(budget.reste)}</dd></div>
+          {rythme?.statut === "pret" && <div><dt>Rythme (burn rate)</dt><dd className="mono">{euros(rythme.hebdomadaire)} / sem.{rythme.semainesRestantes !== null ? ` · ${rythme.semainesRestantes} sem. restantes` : ""} <Etat ton={rythme.sante === "over" ? "crit" : rythme.sante === "risk" ? "alerte" : "ok"} point={false}>{rythme.sante === "over" ? "dépassé" : rythme.sante === "risk" ? "moins de 4 semaines" : "sous contrôle"}</Etat></dd></div>}
         </dl>
       </>
     ) : <p className="discret">Aucun chiffrage pour ce projet (budget initial et dépenses vides).</p>,

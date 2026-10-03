@@ -45,7 +45,7 @@ export function reunionsProjet(taches: Tache[], id: string, cat: Catalogues, jou
 }
 
 // Port de computeBudgetStats (nexora-project part-003:2834).
-export interface Depense { id?: string; projectId?: string; amount?: number | string; status?: "engagee" | "facturee" | "payee"; categoryId?: string; label?: string; }
+export interface Depense { id?: string; projectId?: string; amount?: number | string; status?: "engagee" | "facturee" | "payee"; categoryId?: string; label?: string; date?: string; }
 export function budgetProjet(projet: { budgetInitial?: number | string; budgetActuel?: number | string } | undefined, depenses: Depense[], id: string) {
   const initial = Number(projet?.budgetInitial) || 0;
   const actuel = Number(projet?.budgetActuel) || initial;

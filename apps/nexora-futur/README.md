@@ -99,3 +99,15 @@ Trois lentilles de plus, sur la même requête que la liste (filtres, tri, regro
   (`PATCH categoriser`, corps reconstruit).
 - **Vues** : synthèse du mois et d'une période libre, à catégoriser, transactions (recherche,
   export CSV), patrimoine (répartition, évolution).
+
+## Finances, suite (lot 6b, #659)
+
+- **Graphiques** (charts de `budget-summary`) : cascade, donut, gaufre, 12 mois (détail par
+  catégorie), et **cumul** en 5 modes (catégories, face au budget, trajectoires, petits multiples,
+  dépenses du jour). Palette et règle « Autres » de nexora-project.
+- **Flux** (lignes brutes de `sankey-data`) : revenus → comptes → dépenses, ou patrimoine
+  type → banque → compte. Mise en page propre à Futur, sans optimisation des croisements.
+- **Pro**, en lecture seule (`nexora:quotes`, `nexora:invoices`, `nexora:pro*`) : synthèse
+  Finance PRO (CA signé, planifié, facturé, encaissé, restes, trésorerie, seuil de TVA en
+  franchise), échéances de facturation, devis, factures, livre des recettes.
+- **Page projet** : rythme de dépense (burn rate) dans la section Budget.
