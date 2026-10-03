@@ -127,15 +127,25 @@ try {
   const bac = page.getByRole("region", { name: "À caser aujourd'hui" });
   await bac.getByText("Demande lame pour piste d'accès").waitFor();
   await capture("6-fil-matin");
-  const frise = page.locator(".fil-heures");
-  const boite = await frise.boundingBox();
-  await bac.locator(".fil-tache", { hasText: "Demande lame" }).dragTo(frise, { targetPosition: { x: boite.width / 2, y: 54 * 3 + 5 } });
+  // Cadran (#678) : la tâche déposée à 15 h (en haut à droite, sur l'anneau des créneaux).
+  const cadran = page.locator(".ca-cadran");
+  const boite = await cadran.boundingBox();
+  const a = ((15 - 12) / 24) * 2 * Math.PI - Math.PI / 2;
+  await bac.locator(".fil-tache", { hasText: "Demande lame" }).dragTo(cadran, { targetPosition: { x: boite.width * (0.5 + 0.375 * Math.cos(a)), y: boite.height * (0.5 + 0.375 * Math.sin(a)) } });
   await page.waitForTimeout(250);
   const casee = (await taches()).find((t) => t.id === "t5");
   const auj = await page.evaluate(() => new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()));
   assert.equal(casee.end, auj, "replanifiée aujourd'hui");
-  assert.match(casee.startTime, /^\d{2}:(00|15|30|45)$/, "heure calée au quart d'heure");
-  await page.locator(".fil-ev", { hasText: "Demande lame" }).waitFor();
+  assert.equal(casee.startTime, "15:00", "heure lue sur le cadran");
+  await page.locator(".ca-ev", { hasText: "Demande lame" }).waitFor();
+  assert.ok(await page.locator(".ca-arc title", { hasText: "Demande lame" }).count(), "arc sur le cadran");
+  // Habitudes dans le Cadran : mosaïque au centre, pixel du jour, ← → changent de jour.
+  assert.ok(await page.locator(".ca-centre .mos .px").count() > 0, "mosaïque au centre du cadran");
+  await page.getByRole("region", { name: "Le pixel du jour, Aujourd'hui" }).waitFor();
+  await page.locator("body").press("ArrowLeft");
+  await page.getByRole("region", { name: "Le pixel du jour, Hier" }).waitFor();
+  await page.locator("body").press("ArrowRight");
+  await page.getByRole("region", { name: "Le pixel du jour, Aujourd'hui" }).waitFor();
 
   etape = "fil du jour : bilan du soir et semaine"; console.log("→", etape);
   await page.getByRole("radio", { name: "Soir" }).click();
@@ -145,6 +155,8 @@ try {
   assert.ok((await taches()).find((t) => t.id === "t5").end > auj, "reportée à demain");
   await page.getByRole("radio", { name: "Semaine" }).click();
   assert.equal(await page.locator(".fil-sjour").count(), 7);
+  assert.equal(await page.locator(".fil-sjour .ca-mini").count(), 7, "sept cadrans");
+  await page.getByRole("region", { name: "Heat map annuelle des habitudes" }).waitFor();
   await capture("7-fil-semaine");
 
   etape = "page projet"; console.log("→", etape);

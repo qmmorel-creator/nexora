@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aCaser, echeancesDuJour, evenementsDuJour, glissent, horizon, modeParHeure, pointsAttention, termineesLe } from "../src/donnees/journee";
+import { aCaser, angleMinute, minuteDuPoint, premierCreneau, echeancesDuJour, evenementsDuJour, glissent, horizon, modeParHeure, pointsAttention, termineesLe } from "../src/donnees/journee";
 import type { Tache } from "../src/donnees/modele";
 import { CAT } from "./fixtures";
 
@@ -36,5 +36,30 @@ describe("fil du jour", () => {
   });
   it("points d'attention : retards, réunions sans compte rendu", () => {
     expect(pointsAttention(T, J, CAT).map((p) => [p.genre, p.t.id])).toEqual([["retard", "e"], ["compte-rendu", "g"]]);
+  });
+});
+
+describe("cadran (Ref #678)", () => {
+  it("midi en haut, minuit en bas, 6 h à gauche, 18 h à droite", () => {
+    const p = (m: number) => [Math.round(Math.cos(angleMinute(m)) * 100) + 0, Math.round(Math.sin(angleMinute(m)) * 100) + 0];
+    expect(p(720)).toEqual([0, -100]);
+    expect(p(0)).toEqual([0, 100]);
+    expect(p(360)).toEqual([-100, 0]);
+    expect(p(1080)).toEqual([100, 0]);
+  });
+  it("le point visé donne la minute, calée au quart d'heure", () => {
+    expect(minuteDuPoint(0, -10)).toBe(720);
+    expect(minuteDuPoint(10, 0)).toBe(1080);
+    expect(minuteDuPoint(-10, 0)).toBe(360);
+    expect(minuteDuPoint(0, 10)).toBe(0);
+    const a = angleMinute(10 * 60 + 37);
+    expect(minuteDuPoint(Math.cos(a), Math.sin(a))).toBe(10 * 60 + 30);
+  });
+  it("premier créneau libre après l'heure donnée", () => {
+    const ev = [{ debut: 600, fin: 720 }, { debut: 750, fin: 810 }];
+    expect(premierCreneau(ev, 610)).toBe(810);
+    expect(premierCreneau(ev, 500)).toBe(510);
+    expect(premierCreneau(ev, 610, 30)).toBe(720);
+    expect(premierCreneau(ev, 20 * 60 + 10)).toBeNull();
   });
 });

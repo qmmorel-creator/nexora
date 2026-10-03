@@ -1,16 +1,19 @@
-// Fil du jour (Ref #656) : l'accueil organisé par les heures de la journée.
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+// Fil du jour (Ref #656), mis en page en Cadran (Ref #678) : la journée sur
+// un cadran de 24 h, les habitudes en « pixel du jour », un panneau par moment.
+import { useEffect, useMemo, useState } from "react";
 import { ajouterJours, ecartJours, estReunion, estTerminee, type Tache } from "../donnees/modele";
 import type { Donnees } from "../donnees/magasin";
 import type { RapportsJour, Source } from "../donnees/source";
-import { aCaser, echeancesDuJour, evenementsDuJour, glissent, heureParis, horizon, modeParHeure, pointsAttention, termineesLe, type ModeJour } from "../donnees/journee";
-import { HabitudesJour } from "./Habitudes";
+import { aCaser, echeancesDuJour, evenementsDuJour, glissent, heureParis, horizon, modeParHeure, pointsAttention, premierCreneau, termineesLe, type ModeJour } from "../donnees/journee";
+import { couleursCase, etatsDuJour, fondCase } from "../donnees/habitudes";
+import { Cadran, MiniCadran, arcsDe } from "./Cadran";
+import { Mosaique, PixelDuJour, SemaineHabitudes } from "./PixelDuJour";
+import { useNotifier } from "./Notifications";
 import { compterTriage } from "./Triage";
 import { Bouton, Etat, Segment, Surtitre } from "../composants";
 import { naviguer } from "../navigation/routeur";
 import { initiales } from "./Lignes";
 
-const PX_HEURE = 54;
 const JOURS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
 const MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 const dateLongue = (iso: string) => { const d = new Date(`${iso}T12:00:00Z`); return `${JOURS[d.getUTCDay()]} ${d.getUTCDate()} ${MOIS[d.getUTCMonth()]}`; };
@@ -57,10 +60,35 @@ function Rapport({ titre, r, vide }: { titre: string; r: RapportsJour["matin"]; 
   );
 }
 
+const dureeTxt = (m: number) => m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${String(m % 60).padStart(2, "0")}` : ""}` : `${m} min`;
+const ecrit = (x: EventTarget | null) => x instanceof HTMLElement && (x.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(x.tagName));
+const FOCUS: Partial<Record<ModeJour, [number, number]>> = { matin: [6, 12], soir: [18, 23] };
+
+// Heat map annuelle d'un thème d'habitudes (couleurs des habitudes tenues).
+function AnneeHabitudes({ d, jour }: { d: Donnees; jour: string }) {
+  const [themeId, setThemeId] = useState("");
+  const theme = d.themesHabitudes.find((t) => t.id === themeId) || d.themesHabitudes[0];
+  const cases = useMemo(() => {
+    const dow = (new Date(`${jour}T12:00:00Z`).getUTCDay() + 6) % 7; const debut = ajouterJours(jour, -dow - 7 * 39);
+    return Array.from({ length: 40 * 7 }, (_, i) => { const x = ajouterJours(debut, i); return { x, futur: x > jour, fond: theme ? fondCase(couleursCase(theme, d.journalHabitudes, x), "") : "" }; });
+  }, [jour, theme, d.journalHabitudes]);
+  if (!theme) return <p className="discret">Aucune habitude configurée.</p>;
+  return (
+    <>
+      <div className="ca-bloc-tete"><h2>Habitudes · 40 semaines</h2>
+        <select className="co-select" aria-label="Thème de la heat map" value={theme.id} onChange={(e) => setThemeId(e.target.value)}>{d.themesHabitudes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+      <div className="co-annee ca-annee" aria-hidden="true">{cases.map((c) => <i key={c.x} title={c.x} style={{ background: c.futur ? "transparent" : c.fond || undefined }} />)}</div>
+      <div className="co-leg">{theme.habits.map((h) => <span key={h.id}><span className="hp-dot" style={{ background: h.color }} />{h.name}</span>)}</div>
+    </>
+  );
+}
+
 export function FilDuJour({ d, source, mode: modeChoisi, setMode, selection, onOuvrir, onPatch, onBasculer }: Props) {
+  const notifier = useNotifier();
   const [maintenant, setMaintenant] = useState(heureParis());
   useEffect(() => { const i = setInterval(() => setMaintenant(heureParis()), 30_000); return () => clearInterval(i); }, []);
   const jour = d.aujourdhui;
+  const [jourHab, setJourHab] = useState(jour);
   const mode = modeChoisi ?? modeParHeure(Math.floor(maintenant / 60));
   const { r, erreur } = useRapports(source, jour);
   const ev = useMemo(() => evenementsDuJour(d.taches, jour), [d.taches, jour]);
@@ -68,57 +96,74 @@ export function FilDuJour({ d, source, mode: modeChoisi, setMode, selection, onO
   const caser = useMemo(() => aCaser(d.taches, jour, d), [d, jour]);
   const points = useMemo(() => pointsAttention(d.taches, jour, d), [d, jour]);
   const hz = useMemo(() => horizon(d.taches, jour, d, 14), [d, jour]);
-  const [survol, setSurvol] = useState<number | null>(null);
-
-  const debutH = Math.min(7, ...ev.map((e) => Math.floor(e.debut / 60)));
-  const finH = Math.max(21, ...ev.map((e) => Math.ceil(e.fin / 60)));
-  const y = (m: number) => ((m - debutH * 60) / 60) * PX_HEURE;
+  const hab = useMemo(() => etatsDuJour(d.themesHabitudes, d.journalHabitudes, d.nonApplicables, jour), [d.themesHabitudes, d.journalHabitudes, d.nonApplicables, jour]);
   const projet = (t: Tache) => d.projets.find((p) => p.id === t.projectId);
 
-  const minuteDepuis = (e: DragEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const m = debutH * 60 + ((e.clientY - rect.top) / PX_HEURE) * 60;
-    return Math.max(debutH * 60, Math.min(finH * 60 - 15, Math.round(m / 15) * 15));
-  };
-  const deposer = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault(); setSurvol(null);
-    const id = e.dataTransfer.getData("text/nexora-tache");
+  // ← → changent le jour des habitudes (pas au-delà d'aujourd'hui).
+  useEffect(() => {
+    const touche = (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || ecrit(e.target) || document.querySelector("[role=dialog]")) return;
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      setJourHab((j) => { const n = ajouterJours(j, e.key === "ArrowLeft" ? -1 : 1); return n > jour ? j : n; });
+    };
+    window.addEventListener("keydown", touche);
+    return () => window.removeEventListener("keydown", touche);
+  }, [jour]);
+
+  const planifier = (id: string, m: number) => {
     const t = d.taches.find((x) => x.id === id);
     if (!t) return;
-    const m = minuteDepuis(e);
     const debut = t.start && t.start <= jour && (t.end || "") >= jour ? t.start : jour;
     onPatch(id, { start: debut, end: (t.end || "") < jour ? jour : t.end, startTime: hhmm(m), endTime: hhmm(Math.min(m + 60, 23 * 60 + 59)) }, `« ${t.title} » casée à ${hhmm(m)}.`);
   };
+  const caserAuto = (t: Tache) => {
+    const m = premierCreneau(ev, Math.max(maintenant, 8 * 60));
+    if (m === null) { notifier({ message: "Aucun créneau libre d'une heure avant 21 h : glisse la tâche sur le cadran.", ton: "crit" }); return; }
+    planifier(t.id, m);
+  };
 
-  const carteTache = (t: Tache, extra?: string) => (
+  const carteTache = (t: Tache, extra?: string, action?: JSX.Element) => (
     <div key={t.id} className={`fil-tache ${selection === t.id ? "sel" : ""}`} draggable onDragStart={(e) => { e.dataTransfer.setData("text/nexora-tache", t.id); e.dataTransfer.effectAllowed = "move"; }}>
       <button type="button" role="checkbox" aria-checked={estTerminee(t, d.statuts)} aria-label={`Terminer ${t.title}`} className="case" onClick={() => onBasculer(t.id)} />
       <span className="point" style={{ background: projet(t)?.color || "var(--encre3)" }} />
       <button type="button" className="ligne-lien" onClick={() => onOuvrir(t.id)}>{t.title}</button>
       {extra && <span className="mono fil-extra">{extra}</span>}
+      {action}
     </div>
   );
 
-  const frise = (
-    <section className="panneau fil-frise" aria-label="Frise de la journée">
-      {echeances.length > 0 && <div className="fil-jour-entier"><Surtitre>Toute la journée</Surtitre>{echeances.map((t) => carteTache(t, t.milestone ? "jalon" : "échéance"))}</div>}
-      <div className={`fil-heures ${survol !== null ? "survol" : ""}`} style={{ height: (finH - debutH) * PX_HEURE }}
-        onDragOver={(e) => { e.preventDefault(); setSurvol(minuteDepuis(e)); }} onDragLeave={() => setSurvol(null)} onDrop={deposer}>
-        {Array.from({ length: finH - debutH + 1 }, (_, i) => <div key={i} className="fil-heure" style={{ top: i * PX_HEURE }}><span className="mono">{String(debutH + i).padStart(2, "0")}:00</span></div>)}
-        {ev.map((e) => {
-          const fini = estTerminee(e.t, d.statuts); const passe = e.fin < maintenant;
-          const court = y(e.fin) - y(e.debut) < 40;
-          return (
-            <button type="button" key={e.t.id} className={`fil-ev ${court ? "court" : ""} ${passe || fini ? "passe" : ""} ${selection === e.t.id ? "sel" : ""} ${estReunion(e.t, d.types) ? "reunion" : ""}`} onClick={() => onOuvrir(e.t.id)}
-              style={{ top: y(e.debut) + 1, height: Math.max(22, y(e.fin) - y(e.debut) - 2), left: `calc(64px + (100% - 72px) * ${e.colonne / e.colonnes})`, width: `calc((100% - 72px) / ${e.colonnes} - 4px)`, borderLeftColor: projet(e.t)?.color || "var(--encre3)" }}>
-              <b>{e.t.title}</b><span className="mono">{hhmm(e.debut)}–{hhmm(e.fin)} · {projet(e.t)?.name || "Sans projet"}{e.t.assignee ? ` · ${initiales(e.t.assignee)}` : ""}</span>
+  const cour = ev.find((e) => e.debut <= maintenant && maintenant < e.fin);
+  const proch = ev.filter((e) => e.debut > maintenant).sort((a, b) => a.debut - b.debut)[0];
+  const arcs = arcsDe(ev, (e) => projet(e.t)?.color || "var(--encre3)", maintenant).map((a) => ({
+    ...a, terne: (mode === "matin" && a.debut >= 12 * 60) || (mode === "soir" && !a.passe && a.debut < 18 * 60),
+  }));
+  const faites = hab.parTheme.flatMap((x) => x.habitudes).filter((x) => x.etat === "fait").map((x) => ({ couleur: x.h.color, nom: x.h.name }));
+
+  const cadran = (
+    <section className="ca-zone" aria-label="Cadran de la journée">
+      <Cadran arcs={arcs} maintenant={maintenant} selection={selection} focus={FOCUS[mode] ?? null} habitudes={faites} totalHabitudes={hab.total} onOuvrir={onOuvrir} onDepot={planifier}>
+        <span className="surtitre">{mode === "matin" ? "Ce matin" : mode === "soir" ? "Ce soir" : "Maintenant"}</span>
+        <span className="ca-heure mono">{hhmm(maintenant)}</span>
+        <span className="ca-quoi">{cour ? cour.t.title : "Libre"}</span>
+        <span className="ca-reste mono">{cour ? `reste ${dureeTxt(cour.fin - maintenant)}` : ""}{cour && proch ? " · " : ""}{proch ? `ensuite ${hhmm(proch.debut)}` : ""}</span>
+        {hab.parTheme.length > 0 && <>
+          <span className="ca-mos" title="Le pixel du jour"><Mosaique themes={d.themesHabitudes} journal={d.journalHabitudes} nonApplicables={d.nonApplicables} jour={jour} taille={14} /></span>
+          <span className="ca-mos-n mono"><b>{hab.faites}</b> / {hab.total} habitudes</span>
+        </>}
+      </Cadran>
+      {echeances.length > 0 && <div className="ca-jour-entier"><Surtitre>Toute la journée</Surtitre>{echeances.map((t) => carteTache(t, t.milestone ? "jalon" : "échéance"))}</div>}
+      <ol className="ca-liste" aria-label="Créneaux du jour">
+        {ev.map((e) => (
+          <li key={e.t.id}>
+            <button type="button" className={`ca-ev ${e.fin <= maintenant || estTerminee(e.t, d.statuts) ? "passe" : ""} ${cour === e ? "cour" : ""} ${selection === e.t.id ? "sel" : ""} ${estReunion(e.t, d.types) ? "reunion" : ""}`} onClick={() => onOuvrir(e.t.id)}>
+              <span className="mono">{hhmm(e.debut)}–{hhmm(e.fin)}</span><i style={{ background: projet(e.t)?.color || "var(--encre3)" }} /><b>{e.t.title}</b>
+              <span className="discret">{projet(e.t)?.name || "Sans projet"}{e.t.assignee ? ` · ${initiales(e.t.assignee)}` : ""}</span>
             </button>
-          );
-        })}
-        {survol !== null && <div className="fil-depot mono" style={{ top: y(survol) }}>{hhmm(survol)}</div>}
-        {maintenant >= debutH * 60 && maintenant <= finH * 60 && <div className="fil-maintenant" style={{ top: y(maintenant) }}><span className="mono">{hhmm(maintenant)}</span></div>}
-        {!ev.length && <p className="fil-vide discret">Aucun créneau horaire aujourd'hui. Glisse une tâche du bac « À caser » sur une heure pour la planifier.</p>}
-      </div>
+          </li>
+        ))}
+        {!ev.length && <li className="discret">Aucun créneau horaire aujourd'hui. Glisse une tâche « À caser » sur le cadran, ou utilise « Caser ».</li>}
+      </ol>
     </section>
   );
 
@@ -130,29 +175,60 @@ export function FilDuJour({ d, source, mode: modeChoisi, setMode, selection, onO
       <div><Bouton variante="principal" onClick={() => naviguer("/triage")}>Ouvrir le Triage</Bouton></div>
     </section>
   );
-  const colonneGauche = mode === "soir" ? (
+  const pixel = (
+    <div className="ca-hab">
+      <PixelDuJour jour={jourHab} setJour={setJourHab} aujourdhui={jour} />
+      <SemaineHabitudes jour={jourHab} setJour={setJourHab} aujourdhui={jour} />
+    </div>
+  );
+  const blocCaser = (
+    <section className="panneau fil-carte" aria-label="À caser aujourd'hui"><Surtitre>À caser · glisser sur le cadran</Surtitre>
+      {caser.map((t) => carteTache(t, t.end && t.end < jour ? `−${ecartJours(t.end, jour)} j` : "auj.", <Bouton variante="discret" onClick={() => caserAuto(t)} aria-label={`Caser ${t.title}`}>Caser</Bouton>))}
+      {!caser.length && <p className="discret">Rien à caser : aucune échéance du jour sans heure, aucun retard.</p>}</section>
+  );
+  const blocPoints = (
+    <section className="panneau fil-carte" aria-label="Points d'attention"><Surtitre>Points d'attention</Surtitre>
+      {points.map((p) => (
+        <div key={`${p.genre}-${p.t.id}`} className="fil-point">
+          <Etat ton={p.genre === "retard" ? "crit" : p.genre === "compte-rendu" ? "alerte" : "accent"}>{p.texte}</Etat>
+          <button type="button" className="ligne-lien" onClick={() => onOuvrir(p.t.id)}>{p.t.title}</button>
+        </div>
+      ))}{!points.length && <p className="discret">Rien d'urgent : aucun retard, aucune réunion sans compte rendu.</p>}</section>
+  );
+  const terminees = termineesLe(d.taches, jour, d);
+  const restent = glissent(d.taches, jour, d);
+  const reporter = (t: Tache) => onPatch(t.id, { start: t.start === t.end ? ajouterJours(jour, 1) : t.start, end: ajouterJours(jour, 1) }, `« ${t.title} » reportée à demain.`);
+  const panneau = mode === "soir" ? (
     <>
+      <section className="panneau fil-carte" aria-label="Bilan de la journée"><Surtitre>Bilan de la journée</Surtitre>
+        <div className="ca-chiffres">
+          <div><b className="mono">{ev.filter((e) => e.fin <= maintenant).length}/{ev.length}</b><span>créneaux passés</span></div>
+          <div><b className="mono">{hab.faites}/{hab.total}</b><span>habitudes</span></div>
+          <div><b className="mono">{terminees.length}</b><span>tâche{terminees.length > 1 ? "s" : ""} terminée{terminees.length > 1 ? "s" : ""}</span></div>
+        </div>
+        {terminees.map((t) => carteTache(t))}</section>
+      {pixel}
+      <section className="panneau fil-carte" aria-label="Ce qui reste"><Surtitre>Ce qui reste · glisse à demain ?</Surtitre>
+        {restent.map((t) => <div key={t.id} className="fil-glisse">{carteTache(t)}<Bouton variante="discret" onClick={() => reporter(t)}>Demain</Bouton></div>)}
+        {restent.length > 1 && <div><Bouton variante="discret" onClick={() => restent.forEach(reporter)}>Tout à demain</Bouton></div>}
+        {!restent.length && <p className="discret">Rien n'est dû aujourd'hui.</p>}</section>
       {lienTriage}
-      <section className="panneau fil-carte"><Surtitre>Bilan · terminées aujourd'hui</Surtitre>
-        {termineesLe(d.taches, jour, d).map((t) => carteTache(t))}{!termineesLe(d.taches, jour, d).length && <p className="discret">Aucune tâche terminée aujourd'hui.</p>}</section>
-      <section className="panneau fil-carte"><Surtitre>Glisse à demain ?</Surtitre>
-        {glissent(d.taches, jour, d).map((t) => (
-          <div key={t.id} className="fil-glisse">{carteTache(t)}<Bouton variante="discret" onClick={() => onPatch(t.id, { start: t.start === t.end ? ajouterJours(jour, 1) : t.start, end: ajouterJours(jour, 1) }, `« ${t.title} » reportée à demain.`)}>Demain</Bouton></div>
-        ))}{!glissent(d.taches, jour, d).length && <p className="discret">Rien n'est dû aujourd'hui.</p>}</section>
       <Rapport titre="Rapport du soir" r={r?.soir ?? null} vide={erreur || "Le rapport du soir est généré à 20 h 30."} />
+    </>
+  ) : mode === "matin" ? (
+    <>
+      <Rapport titre="Briefing de 7 h" r={r?.matin ?? null} vide={erreur || "Pas encore de rapport du matin pour aujourd'hui."} />
+      {lienTriage}
+      {blocCaser}
+      {pixel}
+      {blocPoints}
     </>
   ) : (
     <>
-      {mode === "matin" && <Rapport titre="Briefing de 7 h" r={r?.matin ?? null} vide={erreur || "Pas encore de rapport du matin pour aujourd'hui."} />}
-      {mode === "matin" && lienTriage}
-      <section className="panneau fil-carte"><Surtitre>Points d'attention</Surtitre>
-        {points.map((p) => (
-          <div key={`${p.genre}-${p.t.id}`} className="fil-point">
-            <Etat ton={p.genre === "retard" ? "crit" : p.genre === "compte-rendu" ? "alerte" : "accent"}>{p.texte}</Etat>
-            <button type="button" className="ligne-lien" onClick={() => onOuvrir(p.t.id)}>{p.t.title}</button>
-          </div>
-        ))}{!points.length && <p className="discret">Rien d'urgent : aucun retard, aucune réunion sans compte rendu.</p>}</section>
-      {mode === "journee" && r?.matin && <Rapport titre="Briefing de 7 h" r={r.matin} vide="" />}
+      {pixel}
+      {blocCaser}
+      {blocPoints}
+      {r?.matin && <Rapport titre="Briefing de 7 h" r={r.matin} vide="" />}
     </>
   );
 
@@ -169,29 +245,31 @@ export function FilDuJour({ d, source, mode: modeChoisi, setMode, selection, onO
         <Segment etiquette="Mode du fil" valeur={mode} onChange={setMode} options={[{ valeur: "matin", libelle: "Matin" }, { valeur: "journee", libelle: "Journée" }, { valeur: "soir", libelle: "Soir" }, { valeur: "semaine", libelle: "Semaine" }]} />
       </div>
       {mode === "semaine" ? (
-        <div className="fil-semaine">
-          {semaine.map((j) => {
-            const evs = evenementsDuJour(d.taches, j); const ech = echeancesDuJour(d.taches, j, d);
-            return (
-              <section key={j} className={`panneau fil-sjour ${j === jour ? "auj" : ""}`} aria-label={dateLongue(j)}>
-                <Surtitre>{dateLongue(j)}</Surtitre>
-                {evs.map((e) => <button key={e.t.id} type="button" className="fil-sev" onClick={() => onOuvrir(e.t.id)} style={{ borderLeftColor: projet(e.t)?.color }}><span className="mono">{hhmm(e.debut)}</span> {e.t.title}</button>)}
-                {ech.map((t) => <button key={t.id} type="button" className="fil-sev" onClick={() => onOuvrir(t.id)} style={{ borderLeftColor: projet(t)?.color }}><span className="mono">{t.milestone ? "◆" : "fin"}</span> {t.title}</button>)}
-                {!evs.length && !ech.length && <p className="discret">—</p>}
-              </section>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="fil-grille">
-          <div className="fil-col">{colonneGauche}</div>
-          {frise}
-          <div className="fil-col">
-            <section className="panneau fil-carte" aria-label="À caser aujourd'hui"><Surtitre>À caser · glisser sur la frise</Surtitre>
-              {caser.map((t) => carteTache(t, t.end && t.end < jour ? `−${ecartJours(t.end, jour)} j` : "auj."))}
-              {!caser.length && <p className="discret">Rien à caser : aucune échéance du jour sans heure, aucun retard.</p>}</section>
-            <section className="panneau fil-carte" aria-label="Habitudes du jour"><Surtitre>Habitudes</Surtitre><HabitudesJour jour={jour} /></section>
+        <>
+          <div className="fil-semaine">
+            {semaine.map((j) => {
+              const evs = evenementsDuJour(d.taches, j); const ech = echeancesDuJour(d.taches, j, d);
+              return (
+                <section key={j} className={`panneau fil-sjour ${j === jour ? "auj" : ""}`} aria-label={dateLongue(j)}>
+                  <MiniCadran arcs={arcsDe(evs, (e) => projet(e.t)?.color || "var(--encre3)", null)} auj={j === jour} />
+                  <Surtitre>{dateLongue(j)}</Surtitre>
+                  <span className="mono discret ca-sem-n">{evs.length} créneau{evs.length > 1 ? "x" : ""} · {ech.length} échéance{ech.length > 1 ? "s" : ""}</span>
+                  {evs.map((e) => <button key={e.t.id} type="button" className="fil-sev" onClick={() => onOuvrir(e.t.id)} style={{ borderLeftColor: projet(e.t)?.color }}><span className="mono">{hhmm(e.debut)}</span> {e.t.title}</button>)}
+                  {ech.map((t) => <button key={t.id} type="button" className="fil-sev" onClick={() => onOuvrir(t.id)} style={{ borderLeftColor: projet(t)?.color }}><span className="mono">{t.milestone ? "◆" : "fin"}</span> {t.title}</button>)}
+                  {!evs.length && !ech.length && <p className="discret">—</p>}
+                </section>
+              );
+            })}
           </div>
+          <div className="ca-sem-bas">
+            <section className="panneau fil-carte" aria-label="Heat map annuelle des habitudes"><AnneeHabitudes d={d} jour={jour} /></section>
+            <section className="panneau fil-carte" aria-label="Semaine des habitudes"><Surtitre>Habitudes de la semaine</Surtitre><SemaineHabitudes jour={jourHab} setJour={setJourHab} aujourdhui={jour} /></section>
+          </div>
+        </>
+      ) : (
+        <div className="ca-grille">
+          {cadran}
+          <div className="ca-panneau">{panneau}</div>
         </div>
       )}
       <section className="fil-horizon" aria-label="Horizon 14 jours">
