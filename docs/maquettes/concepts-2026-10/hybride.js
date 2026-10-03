@@ -80,7 +80,7 @@
   let S;
   function reset() {
     K.reset(); S = K.state;
-    Object.assign(S, { screen: "accueil", projectId: "p-ctex6", taskId: null, composer: false, toast: "", hot: null, draft: "Relancer BC vendredi 14h #CTEX6 @Vincent !urgent", pop: "", filter: F0(), fpop: "", fview: "tout", pz: "mois", po: 0, pgroup: "projet", show: { corps: true, argent: true }, collapsed: new Set(), jz: "trimestre", jo: 0, cmp: "ref", cper: 30, closed: new Set(), atab: "mois", amonth: "oct", aq: "", acat: "", focus: "", hcolors: {}, settings: false, gstyle: "ruban", cagg: "jour", sagg: "semaine", undo: null, metrics: { tile: new Set(["recovery", "sleep", "hrv", "sport"]), page: new Set(["sleep", "recovery", "hrv", "restingHr", "sport", "steps", "weight"]) } });
+    Object.assign(S, { screen: "accueil", projectId: "p-ctex6", taskId: null, composer: false, toast: "", hot: null, draft: "Relancer BC vendredi 14h #CTEX6 @Vincent !urgent", pop: "", filter: F0(), fpop: "", fview: "tout", pz: "mois", po: 0, pgroup: "projet", show: { corps: true, argent: true }, collapsed: new Set(), jz: "trimestre", jo: 0, cmp: "ref", cper: 30, closed: new Set(), atab: "mois", amonth: "oct", aq: "", acat: "", focus: "", hcolors: {}, settings: false, stab: "habitudes", homePx: true, wN: 24, saved: loadViews(), vname: null, vsel: {}, jgroup: "aucun", jcol: new Set(), of: OF0(), ofpop: "", gstyle: "ruban", cagg: "jour", sagg: "semaine", undo: null, metrics: { tile: new Set(["recovery", "sleep", "hrv", "sport"]), page: new Set(["sleep", "recovery", "hrv", "restingHr", "sport", "steps", "weight", "bodyFat", "respRate", "spo2"]) } });
     const pt = K.task("t7"); if (pt) pt.statusId = "s5"; // point hebdo de 8:30 déjà fait
     extendTasks();
     seedHabits();
@@ -146,11 +146,22 @@
       const ang = h2a(hh(NOW)), [x, y] = P(c, c, R1 + W1 / 2 + 3, ang), [x2, y2] = P(c, c, R2 + W2 / 2 + 6, ang);
       s += `<line x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#18263d" stroke-width="3.5" stroke-linecap="round" data-tip="${e(`Maintenant · ${NOW}|${(() => { const n = dayItems(d).find((i) => i.h0 >= hh(NOW) && !i.done); return n ? "Ensuite : " + hmf(n.h0) + " " + n.label : "Plus rien d'horodaté"; })()}`)}"/><circle cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3" fill="#18263d"/>`;
     }
-    const ps = mini ? 9 : 14, pg = mini ? 2 : 3, hw = SQ * ps + (SQ - 1) * pg, ts = dayTasks(d), tn = Math.max(2, Math.ceil(Math.sqrt(ts.length || 1))), tps = (hw - (tn - 1) * pg) / tn;
-    const gapC = mini ? 12 : 22, total = hw * 2 + gapC, x0 = c - total / 2, y0 = c - hw / 2 - (mini ? 6 : 12), hcnt = count(d), tc = tcount(d);
+    const hcnt = count(d), tc = tcount(d);
+    // Accueil sans pixels (réglage) : les deux compteurs seuls, en grand.
+    if (mini && !S.homePx) {
+      s += `<text x="${(c - size * .13).toFixed(1)}" y="${(c + 4).toFixed(1)}" text-anchor="middle" class="hx-cnum is-big">${tc.done}<tspan class="hx-cden">/${tc.total}</tspan></text><text x="${(c + size * .13).toFixed(1)}" y="${(c + 4).toFixed(1)}" text-anchor="middle" class="hx-cnum is-big">${hcnt.done}<tspan class="hx-cden">/${hcnt.total}</tspan></text>`;
+      s += `<text x="${(c - size * .13).toFixed(1)}" y="${(c + 20).toFixed(1)}" text-anchor="middle" class="hx-csub">tâches</text><text x="${(c + size * .13).toFixed(1)}" y="${(c + 20).toFixed(1)}" text-anchor="middle" class="hx-csub">habitudes</text>`;
+      return s + "</svg>";
+    }
+    // Taille des pixels calculée sur la place libre au cœur : elle diminue
+    // quand le nombre d'habitudes augmente, sans jamais déborder de l'anneau.
+    const pg = mini ? 2 : 3, gapC = mini ? 12 : 22, inner = 2 * (R2 - W2 / 2) * (mini ? .74 : .7);
+    const hwMax = (inner - gapC) / 2, ps = Math.min(mini ? 12 : 14, (hwMax - (SQ - 1) * pg) / SQ);
+    const hw = SQ * ps + (SQ - 1) * pg, ts = dayTasks(d), tn = Math.max(2, Math.ceil(Math.sqrt(ts.length || 1))), tps = (hw - (tn - 1) * pg) / tn;
+    const total = hw * 2 + gapC, x0 = c - total / 2, y0 = c - hw / 2 - (mini ? 6 : 12);
     s += `<g transform="translate(${x0.toFixed(1)} ${y0.toFixed(1)})">${taskSquare(d, tps, pg).replace(/<svg[^>]*>|<\/svg>/g, "")}</g>`;
     s += `<g transform="translate(${(x0 + hw + gapC).toFixed(1)} ${y0.toFixed(1)})">${pixel(d, ps, pg, { hot: S.hot }).replace(/<svg[^>]*>|<\/svg>/g, "")}</g>`;
-    s += `<text x="${(x0 + hw / 2).toFixed(1)}" y="${(y0 + hw + (mini ? 13 : 20)).toFixed(1)}" text-anchor="middle" class="hx-cnum">${tc.done}<tspan class="hx-cden">/${tc.total}</tspan></text><text x="${(x0 + hw + gapC + hw / 2).toFixed(1)}" y="${(y0 + hw + (mini ? 13 : 20)).toFixed(1)}" text-anchor="middle" class="hx-cnum">${hcnt.done}<tspan class="hx-cden">/${hcnt.total}</tspan></text>`;
+    s += `<text x="${(x0 + hw / 2).toFixed(1)}" y="${(y0 + hw + (mini ? 14 : 20)).toFixed(1)}" text-anchor="middle" class="hx-cnum">${tc.done}<tspan class="hx-cden">/${tc.total}</tspan></text><text x="${(x0 + hw + gapC + hw / 2).toFixed(1)}" y="${(y0 + hw + (mini ? 14 : 20)).toFixed(1)}" text-anchor="middle" class="hx-cnum">${hcnt.done}<tspan class="hx-cden">/${hcnt.total}</tspan></text>`;
     if (!mini) s += `<text x="${(x0 + hw / 2).toFixed(1)}" y="${(y0 - 8).toFixed(1)}" text-anchor="middle" class="hx-csub">tâches</text><text x="${(x0 + hw + gapC + hw / 2).toFixed(1)}" y="${(y0 - 8).toFixed(1)}" text-anchor="middle" class="hx-csub">habitudes</text>`;
     return s + "</svg>";
   }
@@ -233,7 +244,7 @@
     ["weight", "Poids", "Corps"], ["bodyFat", "Masse grasse", "Corps"], ["muscleMass", "Masse musculaire", "Corps"], ["muscleRate", "Masse musculaire (%)", "Corps"],
     ["strain", "Day Strain", "Activité"], ["calories", "Calories dépensées", "Activité"], ["steps", "Pas", "Activité"], ["sport", "Sport (séances, objectif)", "Activité"],
   ];
-  const DEMO_METRICS = new Set(["sleep", "recovery", "hrv", "restingHr", "weight", "steps", "sport"]);
+  const DEMO_METRICS = new Set(["sleep", "recovery", "hrv", "restingHr", "weight", "bodyFat", "respRate", "spo2", "steps", "sport"]);
   function chooser(scope) {
     const sel = S.metrics[scope];
     return `<div class="hx-pop" role="dialog" aria-label="Choisir les données affichées"><header><b>Données affichées</b><button type="button" class="hx-x" data-pop="" aria-label="Fermer">×</button></header>
@@ -283,6 +294,39 @@
     ["chantiers", "Chantiers en retard", () => ({ ...F0(), projects: new Set(["p-ctex6", "p-lot2b"]), late: true })],
     ["jalons", "Jalons", () => ({ ...F0(), ms: true })],
   ];
+  // Vues enregistrées : filtres + réglages de l'écran (zoom, regroupement,
+  // représentation…). Conservées dans ce navigateur seulement (démo).
+  const VKEY = "nexora-hybride:vues";
+  const VOPTS = { planning: ["pz", "pgroup", "gstyle", "show"], projets: ["jz", "jgroup", "cmp", "gstyle"] };
+  const fOut = (f) => Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v instanceof Set ? [...v] : v]));
+  const fIn = (o) => { const f = F0(); Object.keys(f).forEach((k) => { if (o[k] === undefined) return; f[k] = f[k] instanceof Set ? new Set(o[k]) : o[k]; }); return f; };
+  const VSEED = [
+    { id: "v1", scope: "planning", name: "Chantiers · trimestre par responsable", filter: { projects: ["p-ctex6", "p-lot2b"] }, opts: { pz: "trimestre", pgroup: "responsable", gstyle: "ecart" } },
+    { id: "v2", scope: "planning", name: "Mes retards du mois", filter: { people: ["Quentin Morel"], late: true }, opts: { pz: "mois", pgroup: "projet", gstyle: "compte" } },
+    { id: "v3", scope: "projets", name: "Glissements sur l'année", filter: {}, opts: { jz: "annee", jgroup: "statut", cmp: "initial", gstyle: "glisse" } },
+  ];
+  function loadViews() { try { const v = JSON.parse(localStorage.getItem(VKEY) || "null"); if (Array.isArray(v)) return v; } catch (_) { /* stockage indisponible */ } return JSON.parse(JSON.stringify(VSEED)); }
+  function storeViews() { try { localStorage.setItem(VKEY, JSON.stringify(S.saved)); } catch (_) { /* stockage indisponible */ } }
+  function applyView(scope, val) {
+    S.vsel[scope] = val; S.fpop = "";
+    if (val.startsWith("p:")) { const v = VIEWS.find((x) => x[0] === val.slice(2)); if (v) { S.filter = v[2](); S.fview = v[0]; } return; }
+    const v = S.saved.find((x) => x.id === val.slice(2)); if (!v) return;
+    S.filter = fIn(v.filter || {}); S.fview = "";
+    Object.entries(v.opts || {}).forEach(([k, x]) => { S[k] = k === "show" ? { ...x } : x; });
+    if (scope === "planning") S.po = 0; else S.jo = 0;
+  }
+  function saveView(scope, name) {
+    const opts = {}; VOPTS[scope].forEach((k) => { opts[k] = k === "show" ? { ...S.show } : S[k]; });
+    const v = { id: "u" + Date.now().toString(36), scope, name: name || "Vue sans nom", filter: fOut(S.filter), opts };
+    S.saved.push(v); storeViews(); S.vsel[scope] = "u:" + v.id; S.vname = null;
+    S.toast = `Vue « ${v.name} » enregistrée`;
+  }
+  function viewPicker(scope) {
+    const mine = S.saved.filter((v) => v.scope === scope), cur = S.vsel[scope] || (S.fview ? "p:" + S.fview : "");
+    const sel = `<select data-vsel="${scope}" aria-label="Vue enregistrée"><option value="" ${cur ? "" : "selected"}>— vue en cours (non enregistrée)</option><optgroup label="Prédéfinies">${VIEWS.map(([id, l]) => `<option value="p:${id}" ${cur === "p:" + id ? "selected" : ""}>${l}</option>`).join("")}</optgroup>${mine.length ? `<optgroup label="Mes vues">${mine.map((v) => `<option value="u:${v.id}" ${cur === "u:" + v.id ? "selected" : ""}>${e(v.name)}</option>`).join("")}</optgroup>` : ""}</select>`;
+    const naming = S.vname !== null && S.vscope === scope;
+    return `<span class="hx-fviews"><span>Vue</span>${sel}${naming ? `<input id="hx-vname" data-vname value="${e(S.vname)}" placeholder="Nom de la vue" aria-label="Nom de la vue" autocomplete="off"><button type="button" class="hx-btn is-sm is-primary" data-vok="${scope}">Enregistrer</button><button type="button" class="hx-more" data-vcancel>Annuler</button>` : `<button type="button" class="hx-more" data-vsave="${scope}">+ Enregistrer la vue</button>${cur.startsWith("u:") ? `<button type="button" class="hx-more is-plain" data-vdel="${scope}|${cur.slice(2)}">Supprimer</button>` : ""}`}</span>`;
+  }
   function applyF(ts, f) {
     const q = f.q.trim().toLowerCase();
     return ts.filter((t) => (!q || t.title.toLowerCase().includes(q)) && (!f.projects.size || f.projects.has(t.projectId)) && (!f.statuses.size || f.statuses.has(t.statusId)) && (!f.people.size || f.people.has(t.assignee)) && (!f.types.size || f.types.has(t.typeId)) && (!f.crit.size || f.crit.has(t.crit)) && (!f.late || K.isLate(t)) && (!f.ms || t.milestone) && (f.done || !K.isDone(t)));
@@ -301,7 +345,7 @@
     }).join("");
     return `<div class="hx-fbar"><label class="hx-fsearch"><span aria-hidden="true">⌕</span><input id="hx-fq" data-fq value="${e(f.q)}" placeholder="Filtrer par mot" aria-label="Filtrer par mot" autocomplete="off"></label>${chips}
       <button type="button" class="hx-fchip ${f.late ? "is-on" : ""}" data-ftoggle="late">En retard</button><button type="button" class="hx-fchip ${f.ms ? "is-on" : ""}" data-ftoggle="ms">Jalons</button><button type="button" class="hx-fchip ${f.done ? "is-on" : ""}" data-ftoggle="done">Terminées</button>
-      <span class="hx-fviews"><span>Vues :</span>${VIEWS.map(([id, l]) => `<button type="button" data-fview="${id}" class="${S.fview === id ? "is-on" : ""}">${l}</button>`).join("")}<button type="button" class="hx-more">+ Enregistrer</button></span>
+      ${opts.views === false ? "" : viewPicker(scope)}
       <p class="hx-fsum">${filterSummary(f, n)}${JSON.stringify([...Object.keys(FOPTS).map((k) => f[k].size), f.q, f.late, f.ms]) !== JSON.stringify([0, 0, 0, 0, 0, "", false, false]) ? ` <button type="button" class="hx-more" data-fview="tout">Réinitialiser</button>` : ""}</p></div>`;
   }
 
@@ -334,18 +378,48 @@
       <div class="hx-nav2"><button type="button" data-shift="${scope}|-1" aria-label="Période précédente">‹</button><button type="button" data-shift="${scope}|0">Aujourd'hui</button><button type="button" data-shift="${scope}|1" aria-label="Période suivante">›</button></div><span class="hx-range">${rangeLabel(r)}</span></div>`;
   }
   // Rangement en lignes sans chevauchement (titre compris).
-  // Représentations de Gantt, au choix : ruban, pixels, fil, comète, métro.
-  const GSTYLES = [["ruban", "Ruban"], ["pixels", "Pixels"], ["fil", "Fil"], ["comete", "Comète"], ["metro", "Métro"]];
-  const gstyleSeg = (sm) => `<div class="hx-gsel"><span>Représentation</span><div class="hx-seg ${sm ? "is-xs" : "is-sm"}">${GSTYLES.map(([id, l]) => `<button type="button" data-gstyle="${id}" aria-pressed="${S.gstyle === id}">${l}</button>`).join("")}</div></div>`;
+  // Représentations de Gantt, au choix. Les cinq dernières sont les nouvelles
+  // variantes de la v4 (Métro retiré).
+  const GSTYLES = [
+    ["ruban", "Ruban", "Bande pâle, avancement plein, titre dedans."],
+    ["pixels", "Pixels", "Une case par jour (semaine ou mois sur les zooms larges) ; foncée = écoulée."],
+    ["fil", "Fil", "Trait épais du début à la fin, titre à la suite."],
+    ["comete", "Comète", "Point à l'échéance, traînée depuis le début."],
+    ["biseau", "Biseau", "La barre s'affine jusqu'à l'échéance ; la partie foncée est le temps écoulé."],
+    ["ecart", "Écart", "Deux traits : en haut le temps écoulé, en bas l'avancement. Le rouge entre les deux est le retard pris."],
+    ["pont", "Pont", "Une arche du début à la fin ; la partie pleine est l'avancement."],
+    ["glisse", "Glissement", "Contour pointillé : dates de la référence ; trait plein : dates actuelles ; écart en jours à la suite."],
+    ["compte", "Compte à rebours", "Seul le temps restant est plein ; le passé est un pointillé ; « J−n » avant l'échéance."],
+  ];
+  const gstyleSeg = (sm) => `<div class="hx-gsel"><span>Représentation</span><div class="hx-seg ${sm ? "is-xs" : "is-sm"}">${GSTYLES.map(([id, l, d]) => `<button type="button" data-gstyle="${id}" aria-pressed="${S.gstyle === id}" title="${e(d)}">${l}</button>`).join("")}</div></div>`;
+  const gstyleDesc = () => { const g = GSTYLES.find((x) => x[0] === S.gstyle) || GSTYLES[0]; return `<b>${g[1]}</b> : ${g[2]}`; };
+  // Position d'une date dans la barre (en % de sa largeur), bornée à 0–100.
+  const inBar = (r, iso, a, b) => Math.max(0, Math.min(100, ((tx(r, iso) - a) / Math.max(.01, b - a)) * 100));
+  const countdown = (t) => { if (K.isDone(t)) return "✓"; if (K.isLate(t)) return `+${K.lateDays(t)} j`; const n = K.days(TODAY, t.end); return t.start > TODAY ? `dans ${K.days(TODAY, t.start)} j` : n === 0 ? "J" : `J−${n}`; };
+  const driftOf = (t) => (t.ref ? K.days(t.ref.end, t.end) : 0);
+  const driftLab = (t) => { const d = driftOf(t); return d ? `<em class="g-dr ${d > 0 ? "is-late" : "is-early"}">${d > 0 ? "+" : "−"}${Math.abs(d)} j</em>` : ""; };
+  // Contenu commun aux variantes sans titre intégré (titre éventuel ajouté après).
+  function gInner(t, r, a, b, st) {
+    const done = K.isDone(t), prog = done ? 100 : t.progress || 0, el = done ? 100 : inBar(r, K.addDays(TODAY, 1), a, b);
+    if (st === "fil") return `<span class="g-line"></span>`;
+    if (st === "comete") return `<span class="g-tail"></span><i class="g-head"></i>`;
+    if (st === "biseau") return `<span class="g-wedge" style="--el:${el.toFixed(1)}%"></span>`;
+    if (st === "ecart") { const lag = Math.max(0, el - prog); return `<span class="g-time"><i style="width:${el.toFixed(1)}%"></i></span><span class="g-done"><i style="width:${prog}%"></i>${lag > 0 && !done ? `<b style="left:${prog}%;width:${lag.toFixed(1)}%"></b>` : ""}</span>`; }
+    if (st === "pont") return `<span class="g-arc"></span><span class="g-arc is-fill" style="clip-path:inset(0 ${100 - prog}% 0 0)"></span>`;
+    if (st === "glisse") { if (!t.ref) return `<span class="g-cur"></span>`; const sc = (v) => (Math.max(0, Math.min(100, v)) - a) / Math.max(.01, b - a) * 100, g0 = sc(tx(r, t.ref.start)), g1 = sc(tx(r, K.addDays(t.ref.end, 1))); if (g1 <= g0) return `<span class="g-cur"></span>`; return `<span class="g-ghost" style="left:${g0.toFixed(1)}%;width:${(g1 - g0).toFixed(1)}%"></span><span class="g-cur"></span>`; }
+    if (st === "compte") { const past = t.start > TODAY ? 0 : done ? 100 : inBar(r, TODAY, a, b); return `<span class="g-past" style="width:${past.toFixed(1)}%"></span><span class="g-left" style="left:${past.toFixed(1)}%"></span>`; }
+    return "";
+  }
   const labW = (t) => t.title.length * 6.3 + 22;
   // Rangement en lignes sans chevauchement, titre compris selon la représentation.
   function pack(ts, r, trackW = 1050) {
     const st = S.gstyle;
-    const items = ts.map((t) => { const a = tx(r, t.milestone ? t.end : t.start), b = t.milestone ? a : tx(r, K.addDays(t.end, 1)); return { t, a, b }; }).filter((x) => x.b >= 0 && x.a <= 100).sort((x, y) => x.a - y.a);
+    const items = ts.map((t) => { const a = tx(r, t.milestone ? t.end : t.start), b = t.milestone ? a : tx(r, K.addDays(t.end, 1)); return { t, a, b, a2: st === "glisse" && t.ref && !t.milestone ? Math.min(a, tx(r, t.ref.start)) : a }; }).filter((x) => x.b >= 0 && x.a <= 100).sort((x, y) => x.a2 - y.a2);
     const rows = [];
     items.forEach((it) => {
-      const a0 = Math.max(0, it.a), barPx = (Math.min(100, it.b) - a0) / 100 * trackW, lab = labW(it.t);
-      const ext = it.t.milestone ? lab + 14 : st === "fil" || st === "comete" ? barPx + lab + 16 : st === "ruban" ? (barPx >= lab ? barPx : barPx + lab + 8) : Math.max(barPx, lab);
+      const a0 = Math.max(0, it.a2), barPx = (Math.min(100, it.b) - a0) / 100 * trackW, lab = labW(it.t);
+      const extra = st === "compte" ? 56 : st === "glisse" ? 40 : 0;
+      const ext = it.t.milestone ? lab + 14 : st === "ruban" ? (barPx >= lab ? barPx : barPx + lab + 8) : st === "pixels" ? Math.max(barPx, lab) : barPx + lab + 16 + extra;
       const end = a0 + (ext / trackW) * 100;
       let row = rows.findIndex((v) => v <= a0 - 0.3); if (row < 0) { row = rows.length; rows.push(0); } rows[row] = end; it.row = row;
     });
@@ -369,10 +443,9 @@
     let inner;
     if (st === "ruban") inner = `<span class="g-bar"><i class="g-prog" style="width:${prog}%"></i><span class="g-lab">${done ? "✓ " : ""}${e(t.title)}</span></span>`;
     else if (st === "pixels") inner = `<span class="g-lab">${e(t.title)}</span><span class="g-px">${pixelsOf(t, r, a, b)}</span>`;
-    else if (st === "fil") inner = `<span class="g-line"></span><span class="g-lab">${done ? "✓ " : ""}${e(t.title)} <small>${K.dateShort(t.end)}</small></span>`;
-    else if (st === "comete") inner = `<span class="g-tail"></span><i class="g-head"></i><span class="g-lab">${e(t.title)} <small>${K.dateShort(t.end)}</small></span>`;
-    else inner = `<span>${done ? "✓ " : ""}${e(t.title)}</span><i></i>`;
-    let h = `<button type="button" class="${st === "metro" ? "hx-li" : "hx-g gs-" + st} ${cls}" data-task="${t.id}" data-drag="${t.id}" ${tip} style="left:${a}%;width:${w}%;top:${top}px;--c:${p.color}">${inner}</button>`;
+    else if (st === "compte") inner = gInner(t, r, a, b, st) + `<span class="g-lab"><b class="g-cd ${late ? "is-late" : ""}">${countdown(t)}</b>${e(t.title)}</span>`;
+    else inner = gInner(t, r, a, b, st) + `<span class="g-lab">${done ? "✓ " : ""}${e(t.title)} <small>${K.dateShort(t.end)}</small>${st === "glisse" ? driftLab(t) : ""}</span>`;
+    let h = `<button type="button" class="hx-g gs-${st} ${cls}" data-task="${t.id}" data-drag="${t.id}" ${tip} style="left:${a}%;width:${w}%;top:${top}px;--c:${p.color}">${inner}</button>`;
     if (late) { const o0 = Math.max(0, tx(r, K.addDays(t.end, 1))), o1 = Math.min(100, tx(r, TODAY)); if (o1 > o0) h += `<span class="hx-over gs-o-${st}" style="left:${o0}%;width:${o1 - o0}%;top:${top}px"></span>`; }
     return h;
   }
@@ -381,8 +454,7 @@
     const st = S.gstyle, done = K.isDone(t), a = Math.max(0, a0), w = Math.max(.35, Math.min(100, a1) - a), prog = done ? 100 : t.progress || 0, tip = `data-tip="${gtip(t)}"`;
     if (t.milestone) return `<i class="hx-pms" data-drag="${t.id}" ${tip} style="left:${a0}%;--c:${color}"></i>`;
     const cls = `is-${t.statusId} ${done ? "is-done" : ""} ${K.isLate(t) ? "is-late" : ""}`;
-    if (st === "metro") return `<i class="hx-pbar ${cls}" data-drag="${t.id}" ${tip} style="left:${a}%;width:${w}%;--c:${color}"></i>`;
-    const inner = st === "ruban" ? `<span class="g-bar"><i class="g-prog" style="width:${prog}%"></i>${prog && !done ? `<span class="g-lab is-pct">${prog} %</span>` : ""}</span>` : st === "pixels" ? `<span class="g-px">${pixelsOf(t, r)}</span>` : st === "fil" ? `<span class="g-line"></span>` : `<span class="g-tail"></span><i class="g-head"></i>`;
+    const b = Math.min(100, a1), inner = st === "ruban" ? `<span class="g-bar"><i class="g-prog" style="width:${prog}%"></i>${prog && !done ? `<span class="g-lab is-pct">${prog} %</span>` : ""}</span>` : st === "pixels" ? `<span class="g-px">${pixelsOf(t, r)}</span>` : gInner(t, r, a, b, st) + (st === "compte" && a1 > 0 ? `<span class="g-lab"><b class="g-cd ${K.isLate(t) ? "is-late" : ""}">${countdown(t)}</b></span>` : "");
     return `<span class="hx-g gs-${st} is-row ${cls}" data-drag="${t.id}" ${tip} style="left:${a}%;width:${w}%;--c:${color}">${inner}</span>`;
   }
   function gridLines(r) { return ticks(r).map((k) => `<i class="hx-gl ${k.major ? "is-major" : ""}" style="left:${tx(r, k.iso)}%"></i>`).join("") + (TODAY >= r.start && TODAY <= r.end ? `<i class="hx-today" style="left:${tx(r, TODAY) + (r.zoom === "semaine" ? 50 / r.span : 0)}%"></i>` : ""); }
@@ -397,7 +469,7 @@
   // Santé (mêmes mesures que HEALTH_METRICS), séances de sport et dépenses
   // quotidiennes. Les 14 derniers jours reprennent les valeurs de kit.js.
   const NDAYS = 400;
-  const SERIES = { dates: [], sleep: [], recovery: [], hrv: [], restingHr: [], weight: [], steps: [], spend: [] };
+  const SERIES = { dates: [], sleep: [], recovery: [], hrv: [], restingHr: [], weight: [], bodyFat: [], respRate: [], spo2: [], steps: [], spend: [] };
   const SESSIONS = [];
   const SPORT_COL = { Course: "#0e7490", Vélo: "#7c5cd6", Natation: "#0284c7", Renforcement: "#d97706" };
   (function genSeries() {
@@ -418,6 +490,13 @@
     D.sport.sessions.forEach((x) => SESSIONS.push({ ...x }));
     D.budget.transactions.forEach((x) => { const j = SERIES.dates.indexOf(x.date); if (j >= 0 && x.amount < 0) SERIES.spend[j] = Math.round(-x.amount); });
     SESSIONS.sort((a, b) => a.date.localeCompare(b.date));
+    // Masse grasse, fréquence respiratoire et SpO₂ : séries de démo propres.
+    let s2 = 19; const r2 = () => ((s2 = (s2 * 16807) % 2147483647) / 2147483647);
+    SERIES.dates.forEach((_, i) => {
+      SERIES.bodyFat.push(Math.round((18.9 - i * .0045 + (r2() - .5) * .5) * 10) / 10);
+      SERIES.respRate.push(Math.round((14.6 - (SERIES.recovery[i] - 55) * .012 + (r2() - .5) * .6) * 10) / 10);
+      SERIES.spo2.push(Math.round((96.4 + (r2() - .5) * 1.4) * 10) / 10);
+    });
   })();
   const zoneColor = (v) => (v >= 67 ? "#16a34a" : v >= 34 ? "#e0a21b" : "#dc2626");
 
@@ -444,8 +523,8 @@
     return `<main class="hx-main hx-home" data-scroll>
       <div class="hx-hello is-tight"><h1>Lundi 5 octobre</h1><p>${today.length} tâches aujourd'hui · <span class="hx-red">${late.length} en retard</span> · ${next ? `ensuite <b>${fmt(next.h0)} ${e(next.label)}</b>` : "plus rien d'horodaté"} · habitudes ${hcnt.done}/${hcnt.total}</p></div>
       <div class="hx-grid">
-        <section class="hx-tile hx-t-day">${tileHead(`Journée <small>${tc.done}/${tc.total} tâches</small>`, "journee")}<div class="hx-dayin"><div class="hx-mini">${cadran(TODAY, 170, true)}</div><ul class="hx-list">${today.map((t) => trow(t)).join("")}</ul></div></section>
-        <section class="hx-tile hx-t-late">${tileHead(`À rattraper <span class="hx-red">${late.length}</span>`, "planning")}<ul class="hx-list">${late.map((t) => trow(t)).join("")}</ul></section>
+        <section class="hx-tile hx-t-day">${tileHead(`Journée <small>${tc.done}/${tc.total} tâches · habitudes ${hcnt.done}/${hcnt.total}</small>`, "journee")}<div class="hx-dayin"><div class="hx-mini">${cadran(TODAY, 240, true)}</div>
+          <div class="hx-daycols"><div><h3 class="hx-h3">Aujourd'hui <small>${today.length}</small></h3><ul class="hx-list">${today.map((t) => trow(t)).join("")}</ul></div><div><h3 class="hx-h3">À rattraper <span class="hx-red">${late.length}</span><button type="button" class="hx-more" data-nav="planning">Planning ›</button></h3><ul class="hx-list">${late.map((t) => trow(t, { noProject: true })).join("")}</ul></div></div></div></section>
         <section class="hx-tile hx-t-body">${tileHead("Corps", "corps", chooserBtn("tile"))}<div class="hx-kpis is-2">${[...S.metrics.tile].slice(0, 4).map((k) => kpi(k)).join("")}</div>
           <div class="hx-hstrip">${Array.from({ length: 7 }, (_, i) => K.addDays(TODAY, i - 6)).map((x) => `<span class="${x === TODAY ? "is-today" : ""}" title="${K.dateShort(x)} · ${count(x).done}/${count(x).total}">${pixel(x, 5, 1)}<small>${K.dayShort(x).slice(0, 2)}</small></span>`).join("")}</div></section>
         <section class="hx-tile hx-t-week">${tileHead("Semaine", "planning", gstyleSeg(true))}${miniWeek()}</section>
@@ -496,11 +575,26 @@
         ${lanes.map((l) => { const col = S.collapsed.has(l.id), late = l.tasks.filter(K.isLate).length, pk = pack(l.tasks, r); const sum = col ? (() => { const a = Math.max(0, tx(r, l.tasks.reduce((m, t) => (t.start < m ? t.start : m), "9999"))), b = Math.min(100, tx(r, K.addDays(l.tasks.reduce((m, t) => (t.end > m ? t.end : m), "0000"), 1))); return `<span class="hx-lsum" style="left:${a}%;width:${b - a}%;--c:${l.color}"></span>`; })() : ""; return `<div class="hx-lane ${col ? "is-col" : ""}" ${l.project ? `data-lane-project="${l.project}"` : ""}><button type="button" class="hx-lh" style="--c:${l.color}" data-collapse="${l.id}" aria-expanded="${!col}"><b><span class="hx-chev">${col ? "▸" : "▾"}</span>${e(l.label)}</b><small>${l.tasks.length} tâche${l.tasks.length > 1 ? "s" : ""}${late ? ` · <em>${late} en retard</em>` : ""}${l.project ? ` · <span class="hx-open" data-nav="projets" data-project="${l.project}">ouvrir</span>` : ""}</small></button><div class="hx-ltrack" data-rs="${r.start}" data-rn="${r.span}" style="height:${col ? 22 : pk.rows * ROWH + 6}px">${gridLines(r)}${col ? sum : pk.items.map((it) => lineItem(it, r)).join("")}</div></div>`; }).join("") || `<p class="hx-empty">Aucune tâche ne correspond aux filtres sur cette période.</p>`}
         ${lifeLanes(r)}
       </div>
-      <p class="hx-legend2"><span><i class="lg-line"></i>en cours</span><span><i class="lg-line is-s1"></i>à planifier</span><span><i class="lg-line is-s2"></i>attente tiers</span><span><i class="lg-line is-done"></i>terminée</span><span><i class="lg-ms"></i>jalon</span><span><i class="lg-over"></i>retard depuis l'échéance</span><span><i class="lg-today"></i>aujourd'hui</span><span>Glisser une ligne la replanifie ; la glisser vers une autre portée change son projet.</span></p>
+      <p class="hx-gdesc">${gstyleDesc()}</p>
+      <p class="hx-legend2"><span>Couleur = projet ; pâle ou hachuré = à planifier ; ambre = attente tiers ; gris = terminée</span><span><i class="lg-ms"></i>jalon</span><span><i class="lg-over"></i>retard depuis l'échéance</span><span><i class="lg-today"></i>aujourd'hui</span><span>Glisser une ligne la replanifie ; la glisser vers une autre portée change son projet.</span></p>
     </main>`;
   }
 
   // --------------------------------------------------------------- projets
+  const JGROUPS = [["aucun", "Aucun"], ["statut", "Statut"], ["responsable", "Responsable"], ["type", "Type"], ["crit", "Criticité"], ["echeance", "Échéance"], ["jalon", "Tâche / jalon"]];
+  const CRIT = [["urgent", "Urgent", "#dc2626"], ["moyen", "Moyen", "#d97706"], ["bas", "Bas", "#16a34a"], ["", "Sans criticité", "#94a3b8"]];
+  function projGroups(ts, by) {
+    if (by === "statut") return D.statuses.map((x) => ({ id: "s-" + x.id, label: x.name, color: x.color, tasks: ts.filter((t) => t.statusId === x.id) })).filter((g) => g.tasks.length);
+    if (by === "responsable") return [...D.members, ""].map((m) => ({ id: "m-" + m, label: m || "Sans responsable", color: "#64748b", tasks: ts.filter((t) => (t.assignee || "") === m) })).filter((g) => g.tasks.length);
+    if (by === "type") return D.types.map((x) => ({ id: "t-" + x.id, label: x.name, color: "#64748b", tasks: ts.filter((t) => t.typeId === x.id) })).filter((g) => g.tasks.length);
+    if (by === "crit") return CRIT.map(([id, l, c]) => ({ id: "c-" + (id || "none"), label: l, color: c, tasks: ts.filter((t) => (t.crit || "") === id) })).filter((g) => g.tasks.length);
+    if (by === "jalon") return [["j-t", "Tâches", "#64748b", (t) => !t.milestone], ["j-m", "Jalons", "#18263d", (t) => t.milestone]].map(([id, l, c, f]) => ({ id, label: l, color: c, tasks: ts.filter(f) })).filter((g) => g.tasks.length);
+    if (by === "echeance") {
+      const wk = J(6), mo = J(30), b = (t) => (K.isDone(t) ? 4 : K.isLate(t) ? 0 : t.end <= wk ? 1 : t.end <= mo ? 2 : 3);
+      return [["e0", "En retard", "#dc2626"], ["e1", "Sous 7 jours", "#d97706"], ["e2", "Sous 30 jours", "#2563eb"], ["e3", "Plus tard", "#64748b"], ["e4", "Terminées", "#16a34a"]].map(([id, l, c], i) => ({ id, label: l, color: c, tasks: ts.filter((t) => b(t) === i) })).filter((g) => g.tasks.length);
+    }
+    return [{ id: "", tasks: ts }];
+  }
   function projets() {
     const p = proj(S.projectId), st = K.projectStats(p.id), f = D.folders.find((x) => x.id === p.folderId);
     const r = trange(S.jz, S.jo), cmp = S.cmp;
@@ -513,7 +607,7 @@
     const avg = ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length : 0;
     const CMP = [["none", "Aucune"], ["ref", "Référence courante"], ["initial", "Plan initial"]];
     const dcell = (d) => (d === null ? `<span class="hx-dim">—</span>` : d === 0 ? `<span class="hx-dim">0 j</span>` : `<span class="${d > 0 ? "hx-red" : "hx-green"}">${d > 0 ? "+" : "−"}${Math.abs(d)} j</span>`);
-    const rows = ts.map((t) => {
+    const rowOf = (t) => {
       const d = drift(t), b = cmp !== "none" ? t[cmp] : null, a0 = tx(r, t.milestone ? t.end : t.start), a1 = t.milestone ? a0 : tx(r, K.addDays(t.end, 1));
       const gx = b ? tx(r, b.end) : 0;
       const ghost = b && (t.milestone ? gx < 0 || gx > 100 : tx(r, K.addDays(b.end, 1)) < 0 || tx(r, b.start) > 100) ? "" : b ? (t.milestone ? `<i class="hx-gms" style="left:${gx}%"></i>` : `<i class="hx-ghost" style="left:${Math.max(0, tx(r, b.start))}%;width:${Math.max(.3, Math.min(100, tx(r, K.addDays(b.end, 1))) - Math.max(0, tx(r, b.start)))}%"></i>`) : "";
@@ -522,6 +616,15 @@
       const bar = projBar(t, r, a0, a1, p.color);
       const over = K.isLate(t) ? `<span class="hx-over" style="left:${Math.max(0, a1)}%;width:${Math.max(0, Math.min(100, tx(r, TODAY)) - Math.max(0, a1))}%;top:7px"></span>` : "";
       return `<div class="hx-prw ${S.taskId === t.id ? "is-sel" : ""} ${K.isDone(t) ? "is-done" : ""}"><span class="hx-gname">${chk(t)}<button type="button" data-task="${t.id}">${t.milestone ? "◆ " : ""}${e(t.title)}</button></span><span class="hx-dim">${K.initials(t.assignee)}</span><span class="hx-num">${K.dateShort(t.start)}</span><span class="hx-num ${K.isLate(t) ? "hx-red" : ""}">${K.dateShort(t.end)}</span><span class="hx-num hx-dim">${b ? K.dateShort(b.end) : "—"}</span><span class="hx-num">${dcell(d)}</span><div class="hx-ptl" data-rs="${r.start}" data-rn="${r.span}">${gridLines(r)}${ghost}${conn}${bar}${over}</div></div>`;
+    };
+    // Groupement libre des tâches du projet (statut, responsable, type…).
+    const groups = projGroups(ts, S.jgroup);
+    const rows = groups.map((g) => {
+      if (!g.id) return g.tasks.map(rowOf).join("");
+      const col = S.jcol.has(g.id), late = g.tasks.filter(K.isLate).length, open = g.tasks.filter((t) => !K.isDone(t)).length;
+      const g0 = g.tasks.reduce((m, t) => (t.start < m ? t.start : m), "9999"), g1 = g.tasks.reduce((m, t) => (t.end > m ? t.end : m), "0000");
+      const a = Math.max(0, tx(r, g0)), b = Math.min(100, tx(r, K.addDays(g1, 1)));
+      return `<div class="hx-prw hx-pgrp"><button type="button" class="hx-gname" data-jcollapse="${g.id}" aria-expanded="${!col}"><span class="hx-chev">${col ? "▸" : "▾"}</span><i style="background:${g.color}"></i><b>${e(g.label)}</b><small>${g.tasks.length} tâche${g.tasks.length > 1 ? "s" : ""}${open !== g.tasks.length ? ` · ${open} ouverte${open > 1 ? "s" : ""}` : ""}${late ? ` · <em>${late} en retard</em>` : ""}</small></button><span></span><span class="hx-num hx-dim">${K.dateShort(g0)}</span><span class="hx-num hx-dim">${K.dateShort(g1)}</span><span></span><span></span><div class="hx-ptl">${gridLines(r)}${b > a ? `<span class="hx-lsum" style="left:${a}%;width:${b - a}%;--c:${g.color}"></span>` : ""}</div></div>${col ? "" : g.tasks.map(rowOf).join("")}`;
     }).join("");
     return `<main class="hx-main hx-projets" data-scroll><nav class="hx-plist" aria-label="Projets">${D.folders.map((fo) => `<h3>${e(fo.name)}</h3>${D.projects.filter((q) => q.folderId === fo.id).map((q) => { const s = K.projectStats(q.id); return `<button type="button" data-nav="projets" data-project="${q.id}" aria-current="${q.id === p.id}"><i style="background:${q.color}"></i><span>${e(q.name)}</span><small>${s.open}${s.late ? ` · <em>${s.late}</em>` : ""}</small></button>`; }).join("")}`).join("")}</nav>
       <div class="hx-pmain"><div class="hx-hello hx-row"><div><p class="hx-crumb">${e(f.name)} › ${e(p.name)}</p><h1 style="--c:${p.color}" class="hx-ptitle">${e(p.name)}</h1></div>
@@ -529,10 +632,11 @@
         <button type="button" class="hx-btn is-primary" data-new>+ Tâche</button></div>
         <section class="hx-tile hx-cmp"><div class="hx-cmpl"><span>Comparer à</span><div class="hx-seg is-sm">${CMP.map(([id, l]) => `<button type="button" data-cmp="${id}" aria-pressed="${cmp === id}">${l}</button>`).join("")}</div><button type="button" class="hx-more is-plain">Figer une nouvelle référence</button></div>
           ${cmp === "none" ? `<p class="hx-dim">Choisissez une référence pour voir les glissements de dates.</p>` : `<div class="hx-cmpk"><div><small>Fin du projet</small><b>${K.dateShort(endNow)}</b><span>${cmp === "ref" ? "réf." : "initial"} ${K.dateShort(endRef)} · ${dcell(K.days(endRef, endNow))}</span></div><div><small>Tâches glissées</small><b class="${slip ? "hx-red" : ""}">${slip}</b><span>sur ${ds.length} comparées</span></div><div><small>En avance</small><b class="${early ? "hx-green" : ""}">${early}</b><span>${stable} à l'heure</span></div><div><small>Dérive moyenne</small><b>${avg > 0 ? "+" : ""}${avg.toFixed(1).replace(".", ",")} j</b><span>sur la date de fin</span></div><div class="hx-cmpbar">${ds.slice().sort((a, b) => b - a).map((d) => `<i class="${d > 0 ? "is-late" : d < 0 ? "is-early" : ""}" style="height:${Math.min(100, 12 + Math.abs(d) * 4)}%" title="${d > 0 ? "+" : ""}${d} j"></i>`).join("")}</div></div>`}</section>
-        <div class="hx-pbarrow">${zoomBar(r, "projets", ["mois", "trimestre", "annee", "pluri"])}${gstyleSeg()}</div>
+        <div class="hx-pbarrow">${zoomBar(r, "projets", ["mois", "trimestre", "annee", "pluri"])}<div class="hx-opts"><span>Grouper par</span><div class="hx-seg is-sm">${JGROUPS.map(([id, l]) => `<button type="button" data-jgroup="${id}" aria-pressed="${S.jgroup === id}">${l}</button>`).join("")}</div></div>${gstyleSeg()}</div>
         ${filterBar("projets", ts.length, { hide: ["projects"] })}
         <div class="hx-tile hx-pgantt"><div class="hx-prw hx-prh"><span>Tâche</span><span>Resp.</span><span>Début</span><span>Fin</span><span>${cmp === "initial" ? "Initiale" : "Réf."}</span><span>Dérive</span><div class="hx-ptl">${sparse(ticks(r), 7).map((k) => `<b class="hx-tick ${k.major ? "is-major" : ""}" style="left:${tx(r, k.iso)}%">${k.label}</b>`).join("")}</div></div>${rows || `<p class="hx-empty">Aucune tâche ne correspond aux filtres.</p>`}</div>
-        <p class="hx-legend2"><span><i class="lg-line"></i>dates actuelles</span><span><i class="lg-ghost"></i>${cmp === "initial" ? "plan initial" : "référence"}</span><span><i class="lg-conn"></i>glissement</span><span><i class="lg-over"></i>retard</span><span>Budget, documents, équipe et journal : « Fiche projet ».</span></p>
+        <p class="hx-gdesc">${gstyleDesc()}</p>
+        <p class="hx-legend2"><span>barre : dates actuelles</span><span><i class="lg-ghost"></i>${cmp === "initial" ? "plan initial" : "référence"}</span><span><i class="lg-conn"></i>glissement</span><span><i class="lg-over"></i>retard</span><span>Budget, documents, équipe et journal : « Fiche projet ».</span></p>
       </div></main>`;
   }
 
@@ -578,18 +682,18 @@
   // Courbe de mesure avec faisceau de variation : en vue Jour, moyenne et
   // min–max glissants sur 7 jours ; en Semaine ou Mois, moyenne et min–max
   // de chaque période. Points = valeur du jour ou moyenne de la période.
-  function metricChart(k, n, mode, m) {
+  function metricChart(k, n, mode, m, W = 1240) {
     const B = buckets(n, mode), raw = SERIES[k];
     let pts, lo, hi, line;
     if (mode === "jour") { pts = B.map((b) => raw[b.idx[0]]); lo = roll(pts, 7, (a) => Math.min(...a)); hi = roll(pts, 7, (a) => Math.max(...a)); line = roll(pts, 7, mean); }
     else { pts = B.map((b) => mean(b.idx.map((i) => raw[i]))); lo = B.map((b) => Math.min(...b.idx.map((i) => raw[i]))); hi = B.map((b) => Math.max(...b.idx.map((i) => raw[i]))); line = pts; }
-    const W = 1240, H = m.h || 104, L = 6, R = 78, T = 12, Bm = 20, cnt = pts.length;
+    const H = m.h || (W < 1000 ? 120 : 104), L = 6, R = 78, T = 12, Bm = 20, cnt = pts.length;
     const all = [...lo, ...hi, m.goal ?? lo[0]], y0v = Math.min(...all), y1v = Math.max(...all), pad = (y1v - y0v) * .12 || 1;
     const lov = m.min != null ? Math.max(m.min, y0v - pad) : y0v - pad, hiv = m.max != null ? Math.min(m.max, y1v + pad) : y1v + pad;
     const X = (i) => L + (cnt > 1 ? i / (cnt - 1) : .5) * (W - L - R), Y = (v) => T + (1 - (v - lov) / (hiv - lov || 1)) * (H - T - Bm);
     let s = `<svg class="hx-mc" viewBox="0 0 ${W} ${H}" role="img" aria-label="${e(m.label)}">`;
     (m.zones || []).forEach(([a, b, c]) => { const ya = Y(Math.min(b, hiv)), yb = Y(Math.max(a, lov)); if (yb > ya) s += `<rect x="${L}" y="${ya.toFixed(1)}" width="${W - L - R}" height="${(yb - ya).toFixed(1)}" fill="${c}" opacity=".06"/>`; });
-    const every = Math.max(1, Math.ceil(cnt / 9));
+    const every = Math.max(1, Math.ceil(cnt / (W < 1000 ? 5 : 9)));
     for (let i = 0; i < cnt; i += every) s += `<line x1="${X(i).toFixed(1)}" y1="${T}" x2="${X(i).toFixed(1)}" y2="${H - Bm}" stroke="#eef1f5"/><text x="${X(i).toFixed(1)}" y="${H - 5}" class="hx-mct" text-anchor="${i === 0 ? "start" : "middle"}">${bucketLabel(B[i], mode)}</text>`;
     if (m.goal != null) s += `<line x1="${L}" y1="${Y(m.goal).toFixed(1)}" x2="${W - R}" y2="${Y(m.goal).toFixed(1)}" stroke="${m.color}" stroke-dasharray="4 4" opacity=".55"/><text x="${W - R + 6}" y="${(Y(m.goal) + 4).toFixed(1)}" class="hx-mct">obj. ${m.fmt(m.goal)}</text>`;
     if (m.mode === "bars") {
@@ -613,13 +717,17 @@
     hrv: { label: "HRV", color: "#0f9d76", fmt: (v) => Math.round(v) + " ms" },
     restingHr: { label: "FC repos", color: "#d64545", fmt: (v) => Math.round(v) + " bpm", invert: true },
     weight: { label: "Poids", color: "#475569", fmt: (v) => v.toFixed(1).replace(".", ",") + " kg", invert: true },
+    bodyFat: { label: "Masse grasse", color: "#b45309", fmt: (v) => v.toFixed(1).replace(".", ",") + " %", invert: true },
+    respRate: { label: "Fréq. respiratoire", color: "#0e7490", fmt: (v) => v.toFixed(1).replace(".", ",") + " /min", invert: true },
+    spo2: { label: "SpO₂", color: "#2563eb", fmt: (v) => v.toFixed(1).replace(".", ",") + " %", min: 90, max: 100 },
     steps: { label: "Pas", color: "#7c5cd6", fmt: (v) => (v / 1000).toFixed(1).replace(".", ",") + " k", goal: 10000, mode: "bars" },
   };
-  const CSECT = [["recup", "Récupération et sommeil", ["recovery", "sleep"]], ["cardio", "Cardio", ["hrv", "restingHr"]], ["comp", "Composition corporelle", ["weight"]], ["act", "Activité et sport", ["steps", "sport"]], ["hab", "Habitudes", []]];
+  const CSECT = [["recup", "Récupération et sommeil", ["recovery", "sleep"]], ["cardio", "Cardio", ["hrv", "restingHr"]], ["comp", "Composition corporelle", ["weight", "bodyFat"]], ["vitaux", "Signes vitaux", ["respRate", "spo2"]], ["act", "Activité et sport", ["steps", "sport"]], ["hab", "Habitudes", []]];
   const AGG = [["jour", "Jour"], ["semaine", "Semaine"], ["mois", "Mois"]];
   const PERIODS = [[14, "14 j"], [30, "30 j"], [90, "90 j"], [365, "1 an"]];
-  function metricRow(k, n) {
-    const m = MDEF[k], ch = metricChart(k, n, S.cagg, m), raw = SERIES[k].slice(-n), last = raw[n - 1], av = mean(raw), delta = (last - av) / av * 100;
+  const HALF = new Set(["recup", "cardio", "comp", "vitaux"]);
+  function metricRow(k, n, half) {
+    const m = MDEF[k], ch = metricChart(k, n, S.cagg, m, half ? 660 : 1240), raw = SERIES[k].slice(-n), last = raw[n - 1], av = mean(raw), delta = (last - av) / av * 100;
     const good = m.invert ? delta < 0 : delta > 0;
     return `<div class="hx-mrow2"><div class="hx-mhd"><small>${m.label}</small><b>${m.fmt(last)}</b><span class="${Math.abs(delta) < 2 ? "hx-dim" : good ? "hx-green" : "hx-red"}">${delta >= 0 ? "↑" : "↓"} ${Math.abs(delta).toFixed(0)} % vs moyenne</span><span class="hx-dim">moy. ${m.fmt(av)} · min ${m.fmt(Math.min(...raw))} · max ${m.fmt(Math.max(...raw))}</span></div>${ch.svg}</div>`;
   }
@@ -670,16 +778,16 @@
   }
   function corps() {
     const n = S.cper, sel = S.metrics.page;
-    const summary = { recup: () => `récup. ${K.last(SERIES.recovery)} % · sommeil ${String(K.last(SERIES.sleep)).replace(".", ",")} h`, cardio: () => `HRV ${K.last(SERIES.hrv)} ms · FC ${K.last(SERIES.restingHr)} bpm`, comp: () => `${String(K.last(SERIES.weight)).replace(".", ",")} kg`, act: () => `${(K.last(SERIES.steps) / 1000).toFixed(1).replace(".", ",")} k pas · ${K.hm(K.sportWeek().done)} de sport`, hab: () => `${count(TODAY).done}/${count(TODAY).total} aujourd'hui` };
+    const summary = { recup: () => `récup. ${K.last(SERIES.recovery)} % · sommeil ${String(K.last(SERIES.sleep)).replace(".", ",")} h`, cardio: () => `HRV ${K.last(SERIES.hrv)} ms · FC ${K.last(SERIES.restingHr)} bpm`, comp: () => `${String(K.last(SERIES.weight)).replace(".", ",")} kg · ${String(K.last(SERIES.bodyFat)).replace(".", ",")} %`, vitaux: () => `${String(K.last(SERIES.respRate)).replace(".", ",")} /min · SpO₂ ${String(K.last(SERIES.spo2)).replace(".", ",")} %`, act: () => `${(K.last(SERIES.steps) / 1000).toFixed(1).replace(".", ",")} k pas · ${K.hm(K.sportWeek().done)} de sport`, hab: () => `${count(TODAY).done}/${count(TODAY).total} aujourd'hui` };
     return `<main class="hx-main hx-corps2" data-scroll>
       <div class="hx-hello hx-row"><div><h1>Corps</h1><p>Récupération ${K.last(SERIES.recovery)} % ce matin. Trait : moyenne · faisceau : minimum et maximum (sur 7 jours glissants en vue Jour, dans chaque période sinon) · points : valeur du jour ou moyenne de la période.</p></div>
         <div class="hx-opts"><span>Période</span><div class="hx-seg is-sm">${PERIODS.map(([p, l]) => `<button type="button" data-cper="${p}" aria-pressed="${n === p}">${l}</button>`).join("")}</div><span>Regrouper par</span><div class="hx-seg is-sm">${AGG.map(([id, l]) => `<button type="button" data-cagg="${id}" aria-pressed="${S.cagg === id}">${l}</button>`).join("")}</div></div><div class="hx-corpsbar">${chooserBtn("page")}</div></div>
-      ${CSECT.map(([id, title, keys]) => {
+      ${(() => { const sec = (list) => list.map(([id, title, keys]) => {
         const open = !S.closed.has(id), shown = keys.filter((k) => sel.has(k));
         if (id !== "hab" && !shown.length) return "";
-        const body = id === "hab" ? habitGrid(Math.min(n, 30)) + (n > 30 ? `<p class="hx-hint">Habitudes limitées aux 30 derniers jours pour rester lisibles ; les vues Semaine, Mois et Année de Habit Pixel restent disponibles.</p>` : "") : shown.map((k) => (k === "sport" ? sportBlock(n) : metricRow(k, n))).join("");
+        const body = id === "hab" ? habitGrid(Math.min(n, 30)) + (n > 30 ? `<p class="hx-hint">Habitudes limitées aux 30 derniers jours pour rester lisibles ; les vues Semaine, Mois et Année de Habit Pixel restent disponibles.</p>` : "") : shown.map((k) => (k === "sport" ? sportBlock(n) : metricRow(k, n, HALF.has(id)))).join("");
         return `<section class="hx-tile hx-csec ${open ? "" : "is-closed"}"><button type="button" class="hx-csh" data-csec="${id}" aria-expanded="${open}"><span class="hx-chev">${open ? "▾" : "▸"}</span><h2>${title}</h2><span class="hx-csum">${summary[id]()}</span></button>${open ? `<div class="hx-csb">${body}</div>` : ""}</section>`;
-      }).join("")}
+      }).join(""); return `<div class="hx-cgrid">${sec(CSECT.filter((c) => HALF.has(c[0])))}</div>${sec(CSECT.filter((c) => !HALF.has(c[0])))}`; })()}
     </main>`;
   }
 
@@ -697,6 +805,37 @@
       spend: [["Compte joint", "Logement", [[2, 950]]], ["Compte courant", "Courses", [[3, 62], [7, 48], [10, 55], [14, 71], [18, 39], [22, 66], [27, 59]]], ["Compte joint", "Courses", [[12, 62], [25, 68]]], ["Compte joint", "Maison", [[6, 64.3], [16, 98], [24, 47.7]]], ["Compte courant", "Restaurants", [[5, 34], [13, 52], [26, 54]]], ["Compte courant", "Transport", [[4, 58], [15, 38], [23, 64]]], ["Compte courant", "Abonnements", [[1, 60], [10, 25]]], ["Compte courant", "Loisirs", [[9, 54], [20, 88], [28, 48]]], ["Compte courant", "Santé", [[17, 45]]]] },
   };
   const ACC_COL = { "Compte courant": "#256d85", "Compte joint": "#3f806f" };
+  // Opérations détaillées, tirées des mêmes mois que le Sankey et la courbe
+  // cumulée (montants identiques), avec tous les champs filtrables.
+  const OP_LABELS = { Logement: ["Loyer"], Courses: ["Monoprix", "Carrefour Market", "Biocoop", "Grand Frais", "Lidl"], Maison: ["Prélèvement EDF", "Leroy Merlin", "Ikea", "Veolia Eau"], Restaurants: ["Le Bouchon des Filles", "Boulangerie Paul", "Sushi Shop", "Café Mokxa"], Transport: ["TCL abonnement", "SNCF CONNECT", "Total Energies"], Abonnements: ["Free Box", "Spotify", "Netflix", "Free Mobile"], Loisirs: ["Decathlon", "Cinéma Pathé", "Fnac", "Musée des Confluences"], Santé: ["Pharmacie Bellecour", "Dr Martin"], Autres: ["La Poste", "Amazon"] };
+  const OP_MODE = { Logement: "Prélèvement", Abonnements: "Prélèvement", Maison: "Carte", Courses: "Carte", Restaurants: "Carte", Transport: "Carte", Loisirs: "Carte", Santé: "Carte", Autres: "Carte" };
+  const ACC_BANK = { "Compte courant": "Boursorama", "Compte joint": "Crédit Agricole", "Livret A": "Crédit Agricole" };
+  const OPS = (() => {
+    const out = []; let n = 0;
+    Object.values(MONTHS).forEach((M) => {
+      const iso = (d) => `${M.key}-${String(d).padStart(2, "0")}`;
+      M.income.forEach(([l, acc, v, d]) => out.push({ id: "o" + n++, date: iso(d), label: l, amount: v, cat: "Revenus", account: acc, bank: ACC_BANK[acc], mode: "Virement", sens: "Revenu", scope: "Perso" }));
+      M.spend.forEach(([acc, cat, list]) => list.forEach(([d, v], j) => {
+        const date = iso(d), tc = D.budget.toCategorize.find((x) => x.date === date && Math.abs(x.amount + v) < .01);
+        const labels = OP_LABELS[cat] || ["Paiement"], label = tc ? tc.label : cat === "Maison" && v === 64.3 ? "Prélèvement EDF" : labels[(d + j) % labels.length];
+        out.push({ id: "o" + n++, date, label, amount: -v, cat: tc ? null : cat, tc: tc ? tc.id : null, account: acc, bank: ACC_BANK[acc], mode: label.startsWith("Prélèvement") || label === "Loyer" ? "Prélèvement" : OP_MODE[cat] || "Carte", sens: "Dépense", scope: "Perso" });
+      }));
+      out.push({ id: "o" + n++, date: iso(Math.min(M.upto, 2)), label: "Virement vers Livret A", amount: -300, cat: "Virement interne", account: "Compte courant", bank: "Boursorama", mode: "Virement", sens: "Virement interne", scope: "Perso" });
+    });
+    out.push({ id: "o" + n++, date: "2026-09-21", label: "Encaissement facture F-2026-014", amount: 1800, cat: "Revenus pro", account: "Compte courant", bank: "Boursorama", mode: "Virement", sens: "Revenu", scope: "Pro" });
+    out.push({ id: "o" + n++, date: "2026-09-08", label: "Abonnement logiciel métier", amount: -29, cat: "Frais pro", account: "Compte courant", bank: "Boursorama", mode: "Carte", sens: "Dépense", scope: "Pro" });
+    return out.sort((a, b) => b.date.localeCompare(a.date) || a.label.localeCompare(b.label));
+  })();
+  const OF0 = () => ({ q: "", from: "", to: "", min: "", max: "", accounts: new Set(), banks: new Set(), cats: new Set(), modes: new Set(), sens: new Set(), statut: new Set(), scope: new Set() });
+  const opCat = (o) => o.cat || (o.tc && S.categorized[o.tc]) || null;
+  const OFIELDS = [
+    ["accounts", "Comptes", (o) => o.account], ["banks", "Banques", (o) => o.bank], ["cats", "Catégories", (o) => opCat(o) || "À classer"], ["modes", "Moyen de paiement", (o) => o.mode],
+    ["sens", "Sens", (o) => o.sens], ["statut", "Statut", (o) => (opCat(o) ? "Classée" : "À classer")], ["scope", "Périmètre", (o) => o.scope],
+  ];
+  function applyOF(list, f) {
+    const q = f.q.trim().toLowerCase(), mn = f.min === "" ? null : Number(f.min), mx = f.max === "" ? null : Number(f.max);
+    return list.filter((o) => (!q || (o.label + " " + (opCat(o) || "") + " " + o.account).toLowerCase().includes(q)) && (!f.from || o.date >= f.from) && (!f.to || o.date <= f.to) && (mn === null || Math.abs(o.amount) >= mn) && (mx === null || Math.abs(o.amount) <= mx) && OFIELDS.every(([k, , get]) => !f[k].size || f[k].has(get(o))));
+  }
   function monthGraph(M) {
     const inc = [...new Set(M.income.map((x) => x[0]))], acc = [...new Set([...M.income.map((x) => x[1]), ...M.spend.map((x) => x[0])])], cats = [...new Set(M.spend.map((x) => x[1]))];
     const sum = (pairs) => pairs.reduce((a, p) => a + p[1], 0);
@@ -725,18 +864,33 @@
   ];
   const TYPES = [["Bourse", "#7c5cd6"], ["Comptes courants", "#94a3b8"], ["Épargne réglementée", "#0284c7"], ["Assurance-vie", "#0f766e"]];
   const BANKS = [["Boursorama", "#256d85"], ["Crédit Agricole", "#3f806f"], ["Linxea", "#cf7856"]];
-  const WSERIES = (() => { let s = 11; const r = () => ((s = (s * 16807) % 2147483647) / 2147483647); const end = { "Comptes courants": 6200, "Épargne réglementée": 22950, "Assurance-vie": 41150, "Bourse": 14000 }, start = { "Comptes courants": 5600, "Épargne réglementée": 17200, "Assurance-vie": 31800, "Bourse": 8600 }; return Array.from({ length: 24 }, (_, i) => { const f = i / 23; const o = {}; TYPES.forEach(([t]) => { const base = start[t] + (end[t] - start[t]) * f; o[t] = i === 23 ? end[t] : Math.round(base * (1 + (r() - .5) * (t === "Bourse" ? .09 : t === "Comptes courants" ? .12 : .015))); }); return o; }); })();
-  const MONTHS24 = Array.from({ length: 24 }, (_, i) => { const d = new Date(Date.UTC(2024, 10 + i, 1)); return MOIS_C[d.getUTCMonth()] + (d.getUTCMonth() === 0 ? " " + d.getUTCFullYear() : ""); });
-  function stackChart() {
-    const W = 1500, H = 240, L = 50, R = 20, T = 10, B = 24, n = WSERIES.length, tot = WSERIES.map((o) => Object.values(o).reduce((a, b) => a + b, 0)), max = Math.ceil(Math.max(...tot) / 10000) * 10000;
+  // Patrimoine mensuel sur 60 mois (nov. 2021 → oct. 2026) ; l'écran en
+  // montre les N derniers, N étant choisi dans les réglages.
+  const WMAX = 60;
+  const WSERIES = (() => { let s = 11; const r = () => ((s = (s * 16807) % 2147483647) / 2147483647); const end = { "Comptes courants": 6200, "Épargne réglementée": 22950, "Assurance-vie": 41150, "Bourse": 14000 }, start = { "Comptes courants": 4300, "Épargne réglementée": 9800, "Assurance-vie": 19500, "Bourse": 2400 }; return Array.from({ length: WMAX }, (_, i) => { const f = Math.pow(i / (WMAX - 1), 1.15); const o = {}; TYPES.forEach(([t]) => { const base = start[t] + (end[t] - start[t]) * f; o[t] = i === WMAX - 1 ? end[t] : Math.round(base * (1 + (r() - .5) * (t === "Bourse" ? .09 : t === "Comptes courants" ? .12 : .015))); }); return o; }); })();
+  const WMONTHS = Array.from({ length: WMAX }, (_, i) => new Date(Date.UTC(2021, 10 + i, 1)));
+  const WN_OPTS = [6, 12, 24, 36, 60];
+  const wsum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
+  function stackChart(N) {
+    const ser = WSERIES.slice(-N), mon = WMONTHS.slice(-N);
+    const W = 1300, H = 430, L = 50, R = 16, T = 10, B = 24, n = ser.length, tot = ser.map(wsum), step = Math.max(...tot) > 60000 ? 20000 : 10000, max = Math.ceil(Math.max(...tot) / step) * step;
     const X = (i) => L + i / (n - 1) * (W - L - R), Y = (v) => T + (1 - v / max) * (H - T - B);
-    let s = `<svg class="hx-mc" viewBox="0 0 ${W} ${H}" role="img" aria-label="Évolution du patrimoine sur 24 mois">`;
-    for (let v = 0; v <= max; v += 20000) s += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#eef1f5"/><text x="${L - 8}" y="${Y(v) + 4}" text-anchor="end" class="hx-mct">${v / 1000} k€</text>`;
-    let base = WSERIES.map(() => 0);
-    TYPES.forEach(([t, c]) => { const top = WSERIES.map((o, i) => base[i] + o[t]); const up = top.map((v, i) => [X(i), Y(v)]), dn = base.map((v, i) => [X(i), Y(v)]).reverse(); s += `<path d="${smooth(up)} L${dn.map((p) => p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" L")} Z" fill="${c}" opacity=".78"><title>${t}</title></path>`; base = top; });
+    const lab = (d, full) => MOIS_C[d.getUTCMonth()] + (full || d.getUTCMonth() === 0 ? " " + d.getUTCFullYear() : "");
+    let s = `<svg class="hx-mc hx-wchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Évolution du patrimoine sur ${N} mois">`;
+    for (let v = 0; v <= max; v += step) s += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#eef1f5"/><text x="${L - 8}" y="${Y(v) + 4}" text-anchor="end" class="hx-mct">${v / 1000} k€</text>`;
+    let base = ser.map(() => 0);
+    TYPES.forEach(([t, c]) => { const top = ser.map((o, i) => base[i] + o[t]); const up = top.map((v, i) => [X(i), Y(v)]), dn = base.map((v, i) => [X(i), Y(v)]).reverse(); s += `<path d="${smooth(up)} L${dn.map((p) => p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" L")} Z" fill="${c}" opacity=".78"/>`; base = top; });
     s += `<path d="${smooth(tot.map((v, i) => [X(i), Y(v)]))}" fill="none" stroke="#18263d" stroke-width="1.6"/>`;
-    MONTHS24.forEach((m, i) => { if (i % 3 === 2 || i === n - 1) s += `<text x="${X(i)}" y="${H - 6}" text-anchor="middle" class="hx-mct">${m}</text>`; });
-    return s + `<circle cx="${X(n - 1)}" cy="${Y(tot[n - 1])}" r="4" fill="#fff" stroke="#18263d" stroke-width="2"/></svg>`;
+    const every = Math.max(1, Math.round(n / 8));
+    mon.forEach((d, i) => { if ((n - 1 - i) % every === 0) s += `<text x="${X(i)}" y="${H - 6}" text-anchor="${i === n - 1 ? "end" : "middle"}" class="hx-mct">${lab(d)}</text>`; });
+    // Infobulle par mois : détail par type, total, variation sur un mois.
+    const slot = (W - L - R) / Math.max(1, n - 1);
+    ser.forEach((o, i) => {
+      const dv = i ? tot[i] - tot[i - 1] : null;
+      const tip = `${lab(mon[i], true)} · ${K.euro(tot[i])}|${TYPES.slice().reverse().map(([t]) => `${t} : ${K.euro(o[t])} (${Math.round(o[t] / tot[i] * 100)} %)`).join("|")}${dv !== null ? `|Sur un mois : ${dv >= 0 ? "+" : "−"}${K.euro(Math.abs(dv))}` : ""}`;
+      s += `<g class="hx-whit"><line x1="${X(i)}" x2="${X(i)}" y1="${T}" y2="${H - B}" stroke="#18263d" stroke-width="1" stroke-dasharray="3 3"/><circle cx="${X(i)}" cy="${Y(tot[i])}" r="4" fill="#fff" stroke="#18263d" stroke-width="2"/><rect x="${(X(i) - slot / 2).toFixed(1)}" y="${T}" width="${slot.toFixed(1)}" height="${H - T - B}" fill="transparent" data-tip="${e(tip)}"/></g>`;
+    });
+    return s + `<circle cx="${X(n - 1)}" cy="${Y(tot[n - 1])}" r="4" fill="#fff" stroke="#18263d" stroke-width="2" pointer-events="none"/></svg>`;
   }
   function wealthGraph() {
     const types = TYPES.map((t) => t[0]).filter((t) => ACCOUNTS.some((a) => a.type === t)), banks = BANKS.map((b) => b[0]);
@@ -803,10 +957,17 @@
         <div class="hx-acols"><section class="hx-tile"><header class="hx-th"><h2>Budget par catégorie</h2><small class="hx-dim">trait : où vous devriez en être au ${b.dayOfMonth}</small></header>${b.categories.map((c) => { const pct = c.limit ? Math.round(c.spent / c.limit * 100) : 0; return `<div class="hx-bcat ${pct > 100 ? "is-over" : ""}"><span><i style="background:${c.color}"></i>${e(c.name)}</span><span class="hx-bmeter"><i style="width:${Math.min(100, pct)}%;background:${pct > 100 ? "#dc2626" : c.color}"></i><b style="left:${Math.round(b.dayOfMonth / b.daysInMonth * 100)}%"></b></span><span class="hx-num">${K.euro(c.spent)} <small>/ ${K.euro(c.limit)}</small></span><span class="hx-num ${pct > 100 ? "hx-red" : "hx-dim"}">${pct} %</span></div>`; }).join("")}</section>
           <section class="hx-tile"><header class="hx-th"><h2>À classer <span class="hx-badge">${todo.length}</span></h2></header>${todo.map((x) => `<div class="hx-txr"><span>${e(x.label)} <small class="hx-dim">${K.dateShort(x.date)}</small></span><span class="hx-num">${K.euro(x.amount, true)}</span><button type="button" class="hx-btn is-sm" data-cat="${x.id}:${x.suggest}">→ ${e(x.suggest)}</button></div>`).join("") || `<p class="hx-dim">Tout est classé.</p>`}</section></div>`;
     } else if (tab === "patrimoine") {
-      const last = WSERIES[23], prev = WSERIES[22], y = WSERIES[11], sum = (o) => Object.values(o).reduce((a, b2) => a + b2, 0);
-      const t = sum(last), m1 = t - sum(prev), m12 = t - sum(y);
-      body = `<div class="hx-mk"><div><small>Patrimoine</small><b>${K.euro(t)}</b></div><div><small>Sur 1 mois</small><b class="${m1 >= 0 ? "hx-green" : "hx-red"}">${m1 >= 0 ? "+" : "−"}${K.euro(Math.abs(m1))}</b><span class="hx-dim">${(m1 / sum(prev) * 100).toFixed(1).replace(".", ",")} %</span></div><div><small>Sur 12 mois</small><b class="hx-green">+${K.euro(m12)}</b><span class="hx-dim">${(m12 / sum(y) * 100).toFixed(1).replace(".", ",")} %</span></div><div><small>Disponible</small><b>${K.euro(last["Comptes courants"] + last["Épargne réglementée"])}</b><span class="hx-dim">comptes + livrets</span></div><div><small>Investi</small><b>${K.euro(last["Assurance-vie"] + last["Bourse"])}</b><span class="hx-dim">assurance-vie + bourse</span></div></div>
-        <section class="hx-tile"><header class="hx-th"><h2>Évolution sur 24 mois <small>par type de compte</small></h2><span class="hx-sleg">${TYPES.map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join("")}</span></header>${stackChart()}</section>
+      const N = S.wN, last = WSERIES[WMAX - 1], prev = WSERIES[WMAX - 2], y = WSERIES[WMAX - 13], first = WSERIES[WMAX - N], sum = wsum;
+      const t = sum(last), m1 = t - sum(prev), m12 = t - sum(y), mN = t - sum(first);
+      const pct = (d, ref) => `${(d / sum(ref) * 100).toFixed(1).replace(".", ",")} %`, sgn = (d) => `${d >= 0 ? "+" : "−"}${K.euro(Math.abs(d))}`;
+      body = `<div class="hx-wtop"><div class="hx-wcards">
+          <div><small>Patrimoine</small><b>${K.euro(t)}</b><span class="hx-dim">au 5 oct. 2026</span></div>
+          <div><small>Sur 1 mois</small><b class="${m1 >= 0 ? "hx-green" : "hx-red"}">${sgn(m1)}</b><span class="hx-dim">${pct(m1, prev)}</span></div>
+          <div><small>Sur 12 mois</small><b class="${m12 >= 0 ? "hx-green" : "hx-red"}">${sgn(m12)}</b><span class="hx-dim">${pct(m12, y)}</span></div>
+          ${N !== 12 ? `<div><small>Sur ${N} mois</small><b class="${mN >= 0 ? "hx-green" : "hx-red"}">${sgn(mN)}</b><span class="hx-dim">${pct(mN, first)}</span></div>` : ""}
+          <div><small>Disponible</small><b>${K.euro(last["Comptes courants"] + last["Épargne réglementée"])}</b><span class="hx-dim">comptes + livrets</span></div>
+          <div><small>Investi</small><b>${K.euro(last["Assurance-vie"] + last["Bourse"])}</b><span class="hx-dim">assurance-vie + bourse</span></div></div>
+        <section class="hx-tile hx-wevo"><header class="hx-th"><h2>Évolution sur ${N} mois <small>par type de compte</small></h2><span class="hx-sleg">${TYPES.map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join("")}</span><button type="button" class="hx-more is-plain" data-settings data-stab="patrimoine" title="Changer la durée dans les réglages">⚙ ${N} mois</button></header>${stackChart(N)}</section></div>
         <div class="hx-acols"><section class="hx-tile"><header class="hx-th"><h2>Structure du patrimoine</h2><small class="hx-dim">type › banque › compte · Sankey de Nexora</small></header>${NXG.sankey(wealthGraph(), { title: "Structure du patrimoine (Sankey)", period: "Soldes au 5 oct. 2026", height: 380 })}</section>
           <section class="hx-tile"><header class="hx-th"><h2>Comptes</h2></header><table class="hx-atab"><thead><tr><th>Compte</th><th>Banque</th><th>Solde</th><th>Part</th></tr></thead><tbody>${TYPES.map(([ty, c]) => `<tr class="is-grp"><th colspan="2"><i style="background:${c}"></i>${ty}</th><td class="hx-num">${K.euro(last[ty])}</td><td class="hx-num hx-dim">${Math.round(last[ty] / t * 100)} %</td></tr>${ACCOUNTS.filter((a) => a.type === ty).map((a) => `<tr><td>${e(a.name)}</td><td class="hx-dim">${e(a.bank)}</td><td class="hx-num">${K.euro(a.bal)}</td><td><span class="hx-bar"><i style="width:${a.bal / t * 100}%;background:${c}"></i></span></td></tr>`).join("")}`).join("")}</tbody></table></section></div>`;
     } else if (tab === "pro") {
@@ -818,11 +979,17 @@
         <section class="hx-tile"><header class="hx-th"><h2>Missions</h2></header><table class="hx-atab"><thead><tr><th>Client</th><th>Mission</th><th>Facturation</th><th>Facturé</th><th></th><th>Statut</th></tr></thead><tbody>${PRO.missions.map((m) => `<tr><td><b>${e(m.client)}</b></td><td>${e(m.name)}</td><td class="hx-dim">${e(m.mode)}</td><td class="hx-num">${NX.financeBudgetEuro(m.billed)} <small class="hx-dim">/ ${NX.financeBudgetEuro(m.budget)}</small></td><td style="width:18%"><span class="hx-bar"><i style="width:${Math.round(m.billed / m.budget * 100)}%;background:#2a78d6"></i></span></td><td>${badge(MST[m.status])}</td></tr>`).join("")}</tbody></table>
           <p class="hx-hint">Finance PRO garde ses 6 onglets : Synthèse, Clients &amp; missions, Vue mission, Factures &amp; encaissements, Dépenses &amp; justificatifs, Trésorerie &amp; prévisions. Le livre des recettes reste dans Factures.</p></section>`;
     } else {
-      const all = [...b.transactions, { date: J(-5), label: "Prélèvement EDF", amount: -64.3, cat: "Maison" }, { date: J(-6), label: "Pharmacie Bellecour", amount: -18.9, cat: "Santé" }, { date: J(-7), label: "Monoprix", amount: -37.45, cat: "Courses" }, { date: J(-8), label: "Loyer octobre", amount: -950, cat: "Logement" }, { date: J(-10), label: "Free Mobile", amount: -15.99, cat: "Abonnements" }];
-      const q = S.aq.toLowerCase(), list = all.filter((x) => (!q || x.label.toLowerCase().includes(q)) && (!S.acat || (x.cat || "À classer") === S.acat)).sort((a, c) => c.date.localeCompare(a.date));
-      const cats = [...new Set(all.map((x) => x.cat || "À classer"))];
-      body = `<div class="hx-fbar"><label class="hx-fsearch"><span aria-hidden="true">⌕</span><input id="hx-aq" data-aq value="${e(S.aq)}" placeholder="Rechercher une opération" aria-label="Rechercher une opération" autocomplete="off"></label>${cats.map((c) => `<button type="button" class="hx-fchip ${S.acat === c ? "is-on" : ""}" data-acat="${e(c)}">${e(c)}</button>`).join("")}<p class="hx-fsum"><b>${list.length} opérations</b> · ${S.acat ? "catégorie : " + e(S.acat) : "toutes catégories"} · <button type="button" class="hx-more">Exporter en CSV</button></p></div>
-        <div class="hx-tile hx-ops"><table class="hx-atab"><thead><tr><th>Date</th><th>Libellé</th><th>Compte</th><th>Catégorie</th><th>Montant</th></tr></thead><tbody>${list.map((x) => { const tc = b.toCategorize.find((y) => y.label === x.label), cat = x.cat || (tc && S.categorized[tc.id]); return `<tr><td class="hx-num hx-dim">${K.dateShort(x.date)}</td><td>${e(x.label)}</td><td class="hx-dim">${x.cat === "Logement" || x.cat === "Maison" ? "Compte joint" : "Compte courant"}</td><td>${cat ? `<span class="hx-catc">${e(cat)}</span>` : `<button type="button" class="hx-btn is-sm" data-cat="${tc ? tc.id : ""}:${tc ? tc.suggest : ""}">À classer → ${tc ? e(tc.suggest) : ""}</button>`}</td><td class="hx-num ${x.amount > 0 ? "hx-green" : ""}">${K.euro(x.amount, true)}</td></tr>`; }).join("")}</tbody></table></div>`;
+      const f = S.of, list = applyOF(OPS, f), out = list.filter((o) => o.sens === "Dépense").reduce((x, o) => x - o.amount, 0), inc = list.filter((o) => o.sens === "Revenu").reduce((x, o) => x + o.amount, 0);
+      const chips = OFIELDS.map(([k, l, get]) => { const opts = [...new Set(OPS.map(get))].sort(); return `<span class="hx-fchip-w"><button type="button" class="hx-fchip ${f[k].size ? "is-on" : ""}" data-ofpop="${k}" aria-expanded="${S.ofpop === k}">${l}${f[k].size ? ` <b>${f[k].size}</b>` : ""} ▾</button>${S.ofpop === k ? `<div class="hx-pop is-f" role="dialog" aria-label="${l}">${opts.map((v) => `<label><input type="checkbox" data-ofset="${k}|${e(v)}" ${f[k].has(v) ? "checked" : ""}>${e(v)} <small class="hx-dim">${OPS.filter((o) => get(o) === v).length}</small></label>`).join("")}<footer><button type="button" class="hx-more" data-ofall="${k}">Tout décocher</button></footer></div>` : ""}</span>`; }).join("");
+      const parts = OFIELDS.filter(([k]) => f[k].size).map(([k, l]) => `${l.toLowerCase()} : ${[...f[k]].join(", ")}`);
+      if (f.from || f.to) parts.push(`du ${f.from ? K.dateShort(f.from) : "début"} au ${f.to ? K.dateShort(f.to) : "aujourd'hui"}`);
+      if (f.min !== "" || f.max !== "") parts.push(`montant ${f.min !== "" ? "≥ " + f.min + " €" : ""}${f.min !== "" && f.max !== "" ? " et " : ""}${f.max !== "" ? "≤ " + f.max + " €" : ""}`);
+      if (f.q) parts.push(`« ${e(f.q)} »`);
+      body = `<div class="hx-fbar"><label class="hx-fsearch"><span aria-hidden="true">⌕</span><input id="hx-aq" data-ofq value="${e(f.q)}" placeholder="Libellé, catégorie, compte" aria-label="Rechercher une opération" autocomplete="off"></label>${chips}
+          <span class="hx-frange"><label>Du <input type="date" data-ofv="from" value="${f.from}" min="2026-09-01" max="${TODAY}"></label><label>au <input type="date" data-ofv="to" value="${f.to}" min="2026-09-01" max="${TODAY}"></label></span>
+          <span class="hx-frange"><label>Montant ≥ <input type="number" data-ofv="min" value="${f.min}" min="0" step="1" placeholder="0"> €</label><label>≤ <input type="number" data-ofv="max" value="${f.max}" min="0" step="1" placeholder="∞"> €</label></span>
+          <p class="hx-fsum"><b>${list.length} opération${list.length > 1 ? "s" : ""}</b> · ${parts.length ? parts.join(" · ") : "aucun filtre"} · dépenses ${NX.financeBudgetEuro(out)} · revenus ${NX.financeBudgetEuro(inc)}${parts.length ? ` <button type="button" class="hx-more" data-ofclear>Réinitialiser</button>` : ""} · <button type="button" class="hx-more">Exporter en CSV</button></p></div>
+        <div class="hx-tile hx-ops"><table class="hx-atab"><thead><tr><th>Date</th><th>Libellé</th><th>Compte</th><th>Banque</th><th>Moyen</th><th>Catégorie</th><th>Périmètre</th><th>Montant</th></tr></thead><tbody>${list.map((o) => { const cat = opCat(o), tc = o.tc && D.budget.toCategorize.find((y) => y.id === o.tc); return `<tr><td class="hx-num hx-dim">${K.dateShort(o.date)}</td><td>${e(o.label)}</td><td>${e(o.account)}</td><td class="hx-dim">${e(o.bank)}</td><td class="hx-dim">${e(o.mode)}</td><td>${cat ? `<span class="hx-catc" ${CATCOL[cat] ? `style="--cc:${CATCOL[cat]}"` : ""}>${e(cat)}</span>` : `<button type="button" class="hx-btn is-sm" data-cat="${tc.id}:${tc.suggest}">À classer → ${e(tc.suggest)}</button>`}</td><td class="hx-dim">${o.scope}</td><td class="hx-num ${o.amount > 0 ? "hx-green" : ""}">${K.euro(o.amount, true)}</td></tr>`; }).join("") || `<tr><td colspan="8" class="hx-empty">Aucune opération ne correspond aux filtres.</td></tr>`}</tbody></table></div>`;
     }
     return `<main class="hx-main hx-argent" data-scroll><div class="hx-hello hx-row"><div><h1>Argent</h1><p>Budget personnel (KDM360), patrimoine et activité pro. Côté budget, la seule écriture possible reste le classement d'une opération, comme dans Nexora.</p></div>${tabs}</div>${body}</main>`;
   }
@@ -856,13 +1023,19 @@
   // ------------------------------------------------------------ réglages
   // Réglages › Thèmes d'habitudes : une couleur par habitude (habit.color dans Nexora).
   const HPALETTE = ["#16a34a", "#0f9d76", "#0284c7", "#2563eb", "#4f46e5", "#7c3aed", "#db2777", "#dc2626", "#ea580c", "#d97706", "#64748b", "#18263d"];
+  const STABS = [["habitudes", "Thèmes d'habitudes"], ["accueil", "Accueil"], ["patrimoine", "Patrimoine"], ["", "Vues affichées"], ["", "Objectifs sport"], ["", "Catégories budget"], ["", "Intégrations"], ["", "Raccourcis"]];
   function settings() {
     if (!S.settings) return "";
+    let body;
+    if (S.stab === "accueil") body = `<p class="hx-hint">Disposition de la tuile Journée de l'accueil.</p>
+      <label class="hx-sopt"><input type="checkbox" data-homepx ${S.homePx ? "checked" : ""}><span><b>Pixels au cœur du cadran</b><small>Pixel des tâches et pixel des habitudes. Leur taille s'adapte au nombre d'habitudes ; décoché, le cadran n'affiche que les deux compteurs et les pixels restent dans la vue Journée.</small></span></label>`;
+    else if (S.stab === "patrimoine") body = `<p class="hx-hint">Durée de l'évolution affichée dans Argent › Patrimoine.</p>
+      <div class="hx-sopt"><span><b>Évolution sur N mois</b><small>Les cartes « Sur 1 mois » et « Sur 12 mois » restent affichées ; une carte « Sur N mois » s'ajoute quand N diffère de 12.</small></span><div class="hx-seg is-sm">${WN_OPTS.map((n) => `<button type="button" data-wn="${n}" aria-pressed="${S.wN === n}">${n} mois</button>`).join("")}</div></div>`;
+    else body = `<p class="hx-hint">Chaque habitude garde sa couleur partout : anneau du cadran, pixel du jour, grilles et liaisons.</p>
+      ${THEMES.map((t) => `<h3><i style="background:${t.color}"></i>${e(t.name)} <small>${t.mode === "single" ? "un seul choix" : "plusieurs possibles"}</small></h3>${t.habits.map((h) => { const cur = hc({ ...h, theme: t }); return `<div class="hx-hset"><span class="hx-hname"><i class="hx-hdot" style="background:${cur}"></i>${e(h.name)}</span><span class="hx-swatches">${HPALETTE.map((c) => `<button type="button" data-hcol="${h.id}|${c}" class="${c === cur ? "is-on" : ""}" style="background:${c}" aria-label="Couleur ${c} pour ${e(h.name)}"></button>`).join("")}<input type="color" data-hpick="${h.id}" value="${cur}" aria-label="Autre couleur pour ${e(h.name)}"></span>${S.hcolors[h.id] ? `<button type="button" class="hx-more" data-hreset="${h.id}">Couleur du thème</button>` : `<span class="hx-dim">couleur du thème</span>`}</div>`; }).join("")}`).join("")}`;
     return `<div class="hx-scrim" data-settings></div><section class="hx-settings" role="dialog" aria-label="Réglages"><header class="hx-th"><h2>Réglages</h2><button type="button" class="hx-x" data-settings aria-label="Fermer">×</button></header>
-      <nav class="hx-stabs"><b>Thèmes d'habitudes</b><span>Apparence</span><span>Vues affichées</span><span>Objectifs sport</span><span>Catégories budget</span><span>Intégrations</span><span>Raccourcis</span></nav>
-      <div class="hx-sbody"><p class="hx-hint">Chaque habitude garde sa couleur partout : anneau du cadran, pixel du jour, grilles et liaisons. Les autres onglets reprennent les réglages de Nexora (12 onglets) ; seul celui-ci est simulé ici.</p>
-      ${THEMES.map((t) => `<h3><i style="background:${t.color}"></i>${e(t.name)} <small>${t.mode === "single" ? "un seul choix" : "plusieurs possibles"}</small></h3>${t.habits.map((h) => { const cur = hc({ ...h, theme: t }); return `<div class="hx-hset"><span class="hx-hname"><i class="hx-hdot" style="background:${cur}"></i>${e(h.name)}</span><span class="hx-swatches">${HPALETTE.map((c) => `<button type="button" data-hcol="${h.id}|${c}" class="${c === cur ? "is-on" : ""}" style="background:${c}" aria-label="Couleur ${c} pour ${e(h.name)}"></button>`).join("")}<input type="color" data-hpick="${h.id}" value="${cur}" aria-label="Autre couleur pour ${e(h.name)}"></span>${S.hcolors[h.id] ? `<button type="button" class="hx-more" data-hreset="${h.id}">Couleur du thème</button>` : `<span class="hx-dim">couleur du thème</span>`}</div>`; }).join("")}`).join("")}
-      </div></section>`;
+      <nav class="hx-stabs">${STABS.map(([id, l]) => (id ? `<button type="button" data-stab="${id}" class="${S.stab === id ? "is-on" : ""}">${l}</button>` : `<span title="Réglage de Nexora, non simulé ici">${l}</span>`)).join("")}</nav>
+      <div class="hx-sbody">${body}<p class="hx-hint is-foot">Les onglets grisés reprennent les réglages de Nexora (12 onglets) ; ils ne sont pas simulés ici.</p></div></section>`;
   }
 
   // ------------------------------------------------------- glisser-déposer
@@ -943,21 +1116,32 @@
   function go(screen, extra = {}) { S.screen = screen; S.toast = ""; S.composer = false; if (extra.project) S.projectId = extra.project; S.taskId = extra.task || (screen === "projets" && !extra.project ? S.taskId : null); render(); }
 
   document.addEventListener("click", (ev) => {
-    const el = ev.target.closest("[data-nav],[data-task],[data-close],[data-done],[data-new],[data-hab],[data-cat],[data-append],[data-reset],[data-demo],[data-pop],[data-fpop],[data-fclear],[data-ftoggle],[data-fview],[data-zoom],[data-shift],[data-group],[data-collapse],[data-cmp],[data-cper],[data-cagg],[data-sagg],[data-gstyle],[data-settings],[data-hcol],[data-hreset],[data-undo],[data-csec],[data-atab],[data-amonth],[data-acat]");
+    const el = ev.target.closest("[data-nav],[data-task],[data-close],[data-done],[data-new],[data-hab],[data-cat],[data-append],[data-reset],[data-demo],[data-pop],[data-fpop],[data-fclear],[data-ftoggle],[data-fview],[data-zoom],[data-shift],[data-group],[data-collapse],[data-cmp],[data-cper],[data-cagg],[data-sagg],[data-gstyle],[data-settings],[data-hcol],[data-hreset],[data-undo],[data-csec],[data-atab],[data-amonth],[data-acat],[data-vsave],[data-vok],[data-vcancel],[data-vdel],[data-jgroup],[data-jcollapse],[data-stab],[data-wn],[data-ofpop],[data-ofclear],[data-ofall]");
     if (!el) { if (!ev.target.closest(".hx-pop") && (S.fpop || S.pop)) { S.fpop = ""; S.pop = ""; render(); } return; }
     const d = el.dataset;
     if (S.justDragged && (d.task || d.drag)) { S.justDragged = false; return; }
     if (d.reset !== undefined) { reset(); render(); return; }
     if (d.gstyle) { S.gstyle = d.gstyle; render(); return; }
+    if (d.vsave) { S.vname = ""; S.vscope = d.vsave; S.focus = "hx-vname"; render(); return; }
+    if (d.vok) { const i = document.getElementById("hx-vname"); saveView(d.vok, i ? i.value.trim() : ""); render(); return; }
+    if (d.vcancel !== undefined) { S.vname = null; render(); return; }
+    if (d.vdel) { const [sc, id] = d.vdel.split("|"); S.saved = S.saved.filter((v) => v.id !== id); storeViews(); S.vsel[sc] = ""; S.toast = "Vue supprimée"; render(); return; }
+    if (d.jgroup) { S.jgroup = d.jgroup; S.jcol = new Set(); render(); return; }
+    if (d.jcollapse) { if (S.jcol.has(d.jcollapse)) S.jcol.delete(d.jcollapse); else S.jcol.add(d.jcollapse); render(); return; }
+    if (d.stab) { S.stab = d.stab; if (d.settings !== undefined) S.settings = true; render(); return; }
+    if (d.wn) { S.wN = Number(d.wn); render(); return; }
+    if (d.ofpop) { S.ofpop = S.ofpop === d.ofpop ? "" : d.ofpop; render(); return; }
+    if (d.ofclear !== undefined) { S.of = OF0(); S.ofpop = ""; render(); return; }
+    if (d.ofall) { S.of[d.ofall].clear(); render(); return; }
     if (d.settings !== undefined) { S.settings = !S.settings; render(); return; }
     if (d.hcol) { const [h, c] = d.hcol.split("|"); S.hcolors[h] = c; render(); return; }
     if (d.hreset) { delete S.hcolors[d.hreset]; render(); return; }
     if (d.undo !== undefined && S.undo) { const u = S.undo, t = K.task(u.id); if (t) Object.assign(t, { start: u.start, end: u.end, projectId: u.projectId }); S.undo = null; S.toast = `« ${t.title} » : modification annulée`; render(); return; }
     if (d.pop !== undefined) { S.pop = S.pop === d.pop ? "" : d.pop; S.fpop = ""; render(); return; }
     if (d.fpop) { S.fpop = S.fpop === d.fpop ? "" : d.fpop; S.pop = ""; render(); return; }
-    if (d.fclear) { S.filter[d.fclear].clear(); S.fview = ""; render(); return; }
-    if (d.ftoggle) { S.filter[d.ftoggle] = !S.filter[d.ftoggle]; S.fview = ""; render(); return; }
-    if (d.fview) { const v = VIEWS.find((x) => x[0] === d.fview); S.filter = v[2](); S.fview = d.fview; S.fpop = ""; render(); return; }
+    if (d.fclear) { S.filter[d.fclear].clear(); S.fview = ""; S.vsel = {}; render(); return; }
+    if (d.ftoggle) { S.filter[d.ftoggle] = !S.filter[d.ftoggle]; S.fview = ""; S.vsel = {}; render(); return; }
+    if (d.fview) { const v = VIEWS.find((x) => x[0] === d.fview); S.filter = v[2](); S.fview = d.fview; S.fpop = ""; S.vsel = {}; render(); return; }
     if (d.zoom) { const [sc, z] = d.zoom.split("|"); if (sc === "planning") { S.pz = z; S.po = 0; } else { S.jz = z; S.jo = 0; } render(); return; }
     if (d.shift) { const [sc, v] = d.shift.split("|"); const k = sc === "planning" ? "po" : "jo"; S[k] = v === "0" ? 0 : S[k] + Number(v); render(); return; }
     if (d.group) { S.pgroup = d.group; render(); return; }
@@ -993,17 +1177,26 @@
   });
   document.addEventListener("change", (ev) => {
     const ds = ev.target.dataset || {};
-    if (ds.fset) { const [k, id] = ds.fset.split("|"); const set = S.filter[k]; if (set.has(id)) set.delete(id); else set.add(id); S.fview = ""; render(); return; }
+    if (ds.fset) { const [k, id] = ds.fset.split("|"); const set = S.filter[k]; if (set.has(id)) set.delete(id); else set.add(id); S.fview = ""; S.vsel = {}; render(); return; }
+    if (ds.vsel) { if (ev.target.value) applyView(ds.vsel, ev.target.value); else S.vsel[ds.vsel] = ""; render(); return; }
+    if (ds.ofset) { const [k, id] = ds.ofset.split("|"); const set = S.of[k]; if (set.has(id)) set.delete(id); else set.add(id); render(); return; }
+    if (ds.ofv) { S.of[ds.ofv] = ev.target.value; render(); return; }
+    if (ds.homepx !== undefined) { S.homePx = ev.target.checked; render(); return; }
     if (ds.show) { S.show[ds.show] = ev.target.checked; render(); return; }
     if (ds.hpick) { S.hcolors[ds.hpick] = ev.target.value; render(); return; }
     const m = ds.metric; if (!m) return; const [scope, k] = m.split("|"); const set = S.metrics[scope]; if (set.has(k)) set.delete(k); else set.add(k); render(); });
   document.addEventListener("input", (ev) => {
     if (ev.target.matches("[data-fq]")) { S.filter.q = ev.target.value; S.fview = ""; S.focus = "hx-fq"; render(); return; }
     if (ev.target.matches("[data-aq]")) { S.aq = ev.target.value; S.focus = "hx-aq"; render(); return; }
+    if (ev.target.matches("[data-vname]")) { S.vname = ev.target.value; return; }
+    if (ev.target.matches("[data-ofq]")) { S.of.q = ev.target.value; S.focus = "hx-aq"; render(); return; }
   });
   document.addEventListener("input", (ev) => { if (ev.target.matches("[data-draft]")) { S.draft = ev.target.value; document.querySelectorAll("[data-preview]").forEach((p) => (p.innerHTML = K.previewHtml(S.draft))); } });
   document.addEventListener("submit", (ev) => { if (!ev.target.matches("[data-compose]")) return; ev.preventDefault(); const t = K.createFromDraft(S.draft); if (!t) return; S.composer = false; S.draft = ""; S.toast = `Tâche « ${t.title} » créée dans ${proj(t.projectId).name} (démo, rien n'est enregistré)`; render(); });
-  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && (S.composer || S.taskId)) { S.composer = false; S.taskId = null; render(); } });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.target.matches && ev.target.matches("[data-vname]")) { if (ev.key === "Enter") { saveView(S.vscope, ev.target.value.trim()); render(); } else if (ev.key === "Escape") { S.vname = null; render(); } return; }
+    if (ev.key === "Escape" && (S.composer || S.taskId)) { S.composer = false; S.taskId = null; render(); }
+  });
 
   function boot() {
     reset();
