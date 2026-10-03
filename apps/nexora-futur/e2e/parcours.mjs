@@ -415,6 +415,8 @@ try {
 
   etape = "tableur : édition en masse et annulation"; console.log("→", etape);
   await page.keyboard.press("6");
+  // Les notifications des étapes précédentes couvrent le bas du tableur.
+  for (const x of await page.getByRole("button", { name: "Fermer la notification" }).all()) await x.click();
   const tb = page.getByRole("table", { name: "Tableur des tâches" });
   await tb.waitFor();
   await tb.getByRole("checkbox", { name: "Sélectionner Revue DOE" }).check();
