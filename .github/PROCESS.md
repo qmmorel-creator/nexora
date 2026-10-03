@@ -104,6 +104,8 @@ Git Netlify. Référence complète : [`docs/PUBLICATION.md`](../docs/PUBLICATION
 |---|---|---|---|
 | `nexora-project` | `application` | `apps/nexora` | `apps/nexora`, `config/environnements.mjs` ou `publication/version.json` change |
 | `nexora-chatgpt-mcp` | `mcp` | `apps/nexora-mcp` | `apps/nexora-mcp`, `config/environnements.mjs` ou `publication/version.json` change |
+| `nexora-futur` | Nexora Futur (#652) | `apps/nexora-futur` | `apps/nexora-futur`, `config/environnements.mjs` ou `publication/version.json` change |
+| `nexora-future-optim` | Nexora Future Optim (#687) | `apps/nexora-future-optim` | `apps/nexora-future-optim`, `config/environnements.mjs` ou `publication/version.json` change |
 
 Chaque publication de production coûte 15 crédits Netlify par site reconstruit (forfait à
 crédits, relevé du 29/09/2026) : regrouper les petites modifications dans une même PR plutôt
