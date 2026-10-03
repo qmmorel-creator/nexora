@@ -18,8 +18,9 @@ import { Corps } from "./Corps";
 import { Argent } from "./Argent";
 import { Reglages } from "./Reglages";
 import { GardeEcran } from "./Garde";
+import { compterTriage, Triage } from "./Triage";
 
-const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"]];
+const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["triage", "Triage"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"]];
 
 function Fiche() {
   const { d, projet, statut, fini, retard, joursRetard, executer, jour } = useOptim();
@@ -118,6 +119,7 @@ function Interface({ email, demo }: { email: string; demo?: boolean }) {
   }, [ouvrir, setSaisie, setReglages]);
   const aller = (e: string, projet?: string) => { ouvrir(null); naviguer(`/${e}${projet ? "/" + encodeURIComponent(projet) : ""}`); };
   const nbRetard = d.taches.filter(retard).length;
+  const nbTriage = useMemo(() => (d.charge ? compterTriage(d) : 0), [d]);
   let contenu;
   if (!d.charge) contenu = <main className="hx-main"><p className="hx-dim">Chargement de vos données…</p></main>;
   else if (ecran === "journee") contenu = <Journee email={email} />;
@@ -125,12 +127,13 @@ function Interface({ email, demo }: { email: string; demo?: boolean }) {
   else if (ecran === "projets") contenu = <Projets projetId={route.segments[1] || null} email={email} ouvrirProjet={(id) => naviguer(`/projets/${encodeURIComponent(id)}`)} />;
   else if (ecran === "corps") contenu = <Corps />;
   else if (ecran === "argent") contenu = <Argent />;
+  else if (ecran === "triage") contenu = <Triage />;
   else contenu = <Accueil aller={aller} />;
   return (
     <div id="hx-app" className="ox-app">
       {demo && <div className="demo"><b>DÉMO</b> Données fictives en mémoire · rien n'est enregistré</div>}
       <header className="hx-top"><span className="hx-logo"><i />Nexora</span>
-        <nav className="hx-nav" aria-label="Sections">{NAV.map(([id, l]) => <button key={id} type="button" aria-current={ecran === id ? "page" : "false"} onClick={() => aller(id)}>{l}{id === "projets" && nbRetard > 0 && <em>{nbRetard}</em>}</button>)}</nav>
+        <nav className="hx-nav" aria-label="Sections">{NAV.map(([id, l]) => <button key={id} type="button" aria-current={ecran === id ? "page" : "false"} onClick={() => aller(id)}>{l}{id === "projets" && nbRetard > 0 && <em>{nbRetard}</em>}{id === "triage" && nbTriage > 0 && <em className="is-info" title="Cartes du triage du matin">{nbTriage}</em>}</button>)}</nav>
         <span className="ox-user" title={email}>{email}</span>
         <button type="button" className="hx-btn is-primary" onClick={() => setSaisie(true)}>+ Nouvelle tâche</button>
         <button type="button" className="hx-gear" aria-label="Réglages" title="Réglages" onClick={() => setReglages("accueil")}>⚙</button>

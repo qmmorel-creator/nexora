@@ -1,3 +1,5 @@
+import { REGLES_DEFAUT, nettoyerReports, normaliserRegles, type ReglesTriage } from "./triage";
+
 // Préférences propres à Nexora Future Optim (Ref #687), clé nexora:optimPrefs.
 // Décision de Quentin (03/10/2026) : synchronisées entre appareils, dans une
 // clé NOUVELLE que ni nexora-project, ni le MCP, ni nexora-futur ne lisent.
@@ -63,6 +65,10 @@ export interface PrefsArgent { onglet: OngletArgent; patrimoineMois: number; per
 export interface PrefsJournee { onglet: "perso" | "pro"; pixelPerso: Record<string, unknown>; pixelPro: Record<string, unknown>; }
 export const JOURNEE_DEFAUT: PrefsJournee = { onglet: "perso", pixelPerso: { pixelTasksSidesFolded: { prev: true, next: true } }, pixelPro: {} };
 
+// Triage (#707) : règles activables et reports « Revoir dans N jours » (clé de carte → date).
+export interface PrefsTriage { regles: ReglesTriage; reports: Record<string, string>; }
+export const TRIAGE_DEFAUT: PrefsTriage = { regles: REGLES_DEFAUT, reports: {} };
+
 export interface PrefsOptim {
   version: 1;
   gantt: StyleGantt;
@@ -73,6 +79,7 @@ export interface PrefsOptim {
   corps: PrefsCorps;
   argent: PrefsArgent;
   journee: PrefsJournee;
+  triage: PrefsTriage;
   vues: VueEnregistree[];
 }
 
@@ -85,6 +92,7 @@ export const PREFS_VIDES: PrefsOptim = {
   corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [], sportsMasques: [], grandeurSport: "duree", photos: {} },
   argent: { onglet: "mois", patrimoineMois: 24, periode: "mois" },
   journee: JOURNEE_DEFAUT,
+  triage: TRIAGE_DEFAUT,
   vues: [],
 };
 // Compatibilité : nom attendu par le magasin de données.
@@ -158,6 +166,7 @@ export function normaliserPrefs(v: unknown): PrefsOptim {
     corps: normaliserCorps(b.corps),
     argent: (() => { const a = objet(b.argent); return { onglet: parmi(a.onglet, ONGLETS_ARGENT, "mois"), patrimoineMois: (DUREES_PATRIMOINE as readonly number[]).includes(a.patrimoineMois as number) ? (a.patrimoineMois as number) : 24, periode: parmi(a.periode, CHOIX_PERIODE_ARGENT, "mois") }; })(),
     journee: (() => { const j = objet(b.journee); return { onglet: j.onglet === "pro" ? "pro" : "perso", pixelPerso: j.pixelPerso && typeof j.pixelPerso === "object" && !Array.isArray(j.pixelPerso) ? (j.pixelPerso as Record<string, unknown>) : JOURNEE_DEFAUT.pixelPerso, pixelPro: objet(j.pixelPro) } as PrefsJournee; })(),
+    triage: (() => { const x = objet(b.triage); return { regles: normaliserRegles(x.regles), reports: nettoyerReports(x.reports, "0000-00-00") }; })(),
     vues: (Array.isArray(b.vues) ? b.vues : []).map(normaliserVue).filter((x): x is VueEnregistree => !!x).slice(0, MAX_VUES),
   };
 }

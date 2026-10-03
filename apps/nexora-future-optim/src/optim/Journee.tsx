@@ -26,7 +26,7 @@ export function Journee({ email }: { email: string }) {
   const pro = filtrer(d.taches.filter((t) => !estProjetCalendrier(d.projets, t.projectId)), { ...FILTRE_VIDE, ...filtre, terminees: true });
   const tete = <div className="hx-hello ox-jtete"><h1>Journée <span>{jourLong(date)}</span></h1>
     <div className="hx-seg" role="group" aria-label="Journée"><button type="button" aria-pressed={onglet === "perso"} onClick={() => choisir("perso")}>Personnelle</button><button type="button" aria-pressed={onglet === "pro"} onClick={() => choisir("pro")}>Professionnelle</button></div>
-    <p className="ox-trlien"><button type="button" className="hx-more" onClick={() => setDate(jour)} hidden={date === jour}>Revenir à aujourd'hui</button></p></div>;
+    <p className="ox-trlien"><button type="button" className="hx-more" onClick={() => setDate(jour)} hidden={date === jour}>Revenir à aujourd'hui</button><button type="button" className="hx-more" onClick={() => naviguer("/triage", new URLSearchParams({ moment: "matin" }))}>Triage du matin ›</button><button type="button" className="hx-more" onClick={() => naviguer("/triage", new URLSearchParams({ moment: "soir" }))}>Triage du soir ›</button></p></div>;
   const legende = <ul className="hx-legend"><li><i style={{ background: "#7c5cd6" }} />Réunions et tâches à heure fixe <small>(couleur du projet)</small></li>
     {onglet === "perso" && d.themesHabitudes.filter((t) => t.habits.length).map((t) => <li key={t.id}><i style={{ background: t.habits.length === 1 ? couleurHabitude(t.habits[0]) : t.color }} />{t.name}</li>)}
     <li><i className="ox-nuitlg" />Nuit (23 h – 6 h 30)</li></ul>;
