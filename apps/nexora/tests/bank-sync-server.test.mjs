@@ -121,7 +121,8 @@ test("passage complet : rapproche la saisie, crée le reste, rien au second pass
   assert.equal(first.accounts.length, 1, "compte ignoré non synchronisé");
   const [account] = first.accounts;
   assert.equal(account.dateFrom, "2026-09-25");
-  assert.deepEqual(account.skipped, { pending: 1, beforeImportFrom: 1, otherCurrency: 0 });
+  assert.deepEqual(account.skipped, { pending: 1, beforeImportFrom: 1, otherCurrency: 0, ignored: 0, invalid: 0, statuses: { PDNG: 1 } });
+  assert.equal(account.samples.pending[0].label, "En attente");
   assert.deepEqual(account.balance, { amount: 1500, currency: "EUR", type: "CLBD", date: "2026-10-03" });
   assert.equal(writes.imports[0].p_operation, "import");
   assert.equal(writes.imports[0].p_transaction.category, "Abonnements");

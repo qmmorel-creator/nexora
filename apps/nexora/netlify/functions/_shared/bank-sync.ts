@@ -243,7 +243,7 @@ async function setReconciled(finance: FinanceConfig, transactionId: string, date
 export type AccountSyncResult = {
   accountKey: string; accountId: string | null; label: string | null;
   created: number; reconciled: number; already: number; remaining?: number;
-  skipped?: Record<string, number>; balance?: unknown; dateFrom?: string; error?: string;
+  skipped?: Record<string, unknown>; samples?: unknown; balance?: unknown; dateFrom?: string; error?: string;
 };
 
 // Écritures par appel : une fonction Netlify est coupée au bout de 10 s
@@ -284,9 +284,10 @@ export async function runSync(config: EnableBankingConfig, finance: FinanceConfi
         readExisting(finance, link.account_id, shiftDays(dateFrom, -(MATCH_DAYS + 3)))
       ]);
       result.balance = pickBalance(balances?.balances);
-      const plan = planAccountSync({ accountKey: link.account_key, accountId: link.account_id, importFrom: link.import_from, bankTransactions, existing, rules });
+      const plan = planAccountSync({ accountKey: link.account_key, accountId: link.account_id, importFrom: link.import_from, bankTransactions, existing, rules, ignorePatterns: Array.isArray(link.ignore_patterns) ? link.ignore_patterns : [] });
       result.already = plan.already;
       result.skipped = plan.skipped;
+      result.samples = plan.samples;
       // Rapprochements d'abord : une saisie existante ne doit jamais être
       // doublée par une création d'un passage interrompu.
       for (const item of plan.reconcile) {
@@ -353,6 +354,7 @@ export async function readStatus(finance: FinanceConfig, now = new Date()) {
       currency: l.currency,
       accountId: l.account_id,
       importFrom: l.import_from,
+      ignorePatterns: Array.isArray(l.ignore_patterns) ? l.ignore_patterns : [],
       lastSyncedAt: l.last_synced_at
     }))
   };

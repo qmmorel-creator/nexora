@@ -16,7 +16,7 @@ function slice(name) {
   assert.ok(from !== -1 && to > from, `bloc ${name} introuvable dans .build/index.html`);
   return html.slice(from + start.length, to);
 }
-const B = vm.runInThisContext(`(function () {\n${slice("BANK-SYNC")}\n;return { bankSyncConsentLabel, bankSyncResultLine, bankSyncGroups, bankSyncCallbackMessage, bankSyncErrorText };\n})`)();
+const B = vm.runInThisContext(`(function () {\n${slice("BANK-SYNC")}\n;return { bankSyncConsentLabel, bankSyncResultLine, bankSyncGroups, bankSyncCallbackMessage, bankSyncErrorText, bankSyncPatternsText, bankSyncSampleLines };\n})`)();
 
 test("onglet déclaré, rendu, appelé par le serveur et ouvert au retour de la banque", () => {
   assert.match(html, /\{ key: "bankSync", label: "Banques connectées"/);
@@ -44,6 +44,18 @@ test("résultat d'un passage, erreurs traduites", () => {
   assert.match(html, /if \(!p\.result\.partial\) break;/, "l'interface relance tant que le passage est partiel");
   assert.equal(B.bankSyncResultLine({ error: "consent_expired" }), "Erreur : accès expiré, renouvelez la connexion.");
   assert.equal(B.bankSyncErrorText("enable_banking_http_500"), "enable_banking_http_500");
+});
+
+test("libellés ignorés et échantillon des opérations écartées", () => {
+  assert.equal(B.bankSyncPatternsText(["FACTURE CARTE A DEBIT DIFFERE", "Relevé CB"]), "FACTURE CARTE A DEBIT DIFFERE\nRelevé CB");
+  assert.equal(B.bankSyncPatternsText(undefined), "");
+  assert.match(B.bankSyncResultLine({ created: 0, skipped: { pending: 78, statuses: { PDNG: 78 }, ignored: 1 } }), /78 en attente ignorées \(PDNG 78\) · 1 ignorée par libellé/);
+  const lines = B.bankSyncSampleLines({ samples: { pending: [{ status: "PDNG", date: "2026-10-02", amount: -12.5, label: "CB Carrefour" }], ignored: [{ date: "2026-11-04", amount: -1460.2, label: "FACTURE CARTE" }] } });
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /^En attente \(PDNG\) · 02\/10\/2026 · -12,50\s€ · CB Carrefour$/);
+  assert.match(lines[1], /^Ignorée par libellé · 04\/11\/2026/);
+  assert.deepEqual(B.bankSyncSampleLines(null), []);
+  assert.match(html, /ignorePatterns: String\(patterns \|\| ""\)\.split\("\\n"\)/);
 });
 
 test("groupes : comptes rangés par banque, comptes d'une banque déconnectée conservés", () => {

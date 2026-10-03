@@ -39105,7 +39105,12 @@ function bankSyncResultLine(result) {
   parts.push(`${result.reconciled || 0} rapprochée${result.reconciled > 1 ? "s" : ""}`);
   parts.push(`${result.already || 0} déjà présente${result.already > 1 ? "s" : ""}`);
   const pending = result.skipped?.pending || 0;
-  if (pending) parts.push(`${pending} en attente ignorée${pending > 1 ? "s" : ""}`);
+  if (pending) {
+    const statuses = Object.entries(result.skipped?.statuses || {}).map(([k, n]) => `${k} ${n}`).join(", ");
+    parts.push(`${pending} en attente ignorée${pending > 1 ? "s" : ""}${statuses ? ` (${statuses})` : ""}`);
+  }
+  const ignored = result.skipped?.ignored || 0;
+  if (ignored) parts.push(`${ignored} ignorée${ignored > 1 ? "s" : ""} par libellé`);
   if (result.remaining) parts.push(`${result.remaining} restant à traiter au prochain passage`);
   const balance = result.balance && Number.isFinite(Number(result.balance.amount))
     ? ` · solde banque ${Number(result.balance.amount).toLocaleString("fr-FR", { style: "currency", currency: result.balance.currency || "EUR" })}`
@@ -39123,6 +39128,17 @@ function bankSyncGroups(status) {
   const orphans = accounts.filter((a) => !connections.some((c) => c.aspspKey === a.aspspKey));
   if (orphans.length) groups.push({ aspspKey: "", name: "Banques déconnectées", consent: { state: "expired" }, validUntil: null, accounts: orphans.map((a) => ({ ...a, lastResult: null })), disconnected: true });
   return groups;
+}
+function bankSyncPatternsText(patterns) {
+  return (Array.isArray(patterns) ? patterns : []).join("\n");
+}
+// Échantillon des opérations écartées au dernier passage, une ligne chacune.
+function bankSyncSampleLines(result) {
+  const money = (n) => (Number.isFinite(Number(n)) ? Number(n).toLocaleString("fr-FR", { style: "currency", currency: "EUR" }) : "?");
+  const lines = [];
+  for (const s of result?.samples?.pending || []) lines.push(`En attente${s.status ? ` (${s.status})` : ""} · ${bankSyncDate(s.date) || "sans date"} · ${money(s.amount)} · ${s.label || "sans libellé"}`);
+  for (const s of result?.samples?.ignored || []) lines.push(`Ignorée par libellé · ${bankSyncDate(s.date) || "sans date"} · ${money(s.amount)} · ${s.label || "sans libellé"}`);
+  return lines;
 }
 function bankSyncCallbackMessage(params) {
   const get = (k) => (params && typeof params.get === "function" ? params.get(k) : null) || "";
@@ -39184,14 +39200,20 @@ const BANK_SYNC_CSS = `
 .nx-bank-result.is-error{color:#9b1c1c}
 .nx-bank-connect{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px;border:1px dashed var(--border,#d8e1eb);border-radius:8px}
 .nx-bank-connect select{min-width:220px}
+.nx-bank-ignore{display:flex;flex-direction:column;gap:2px;font-size:12px;flex:1 1 220px}
+.nx-bank-ignore textarea{font:inherit;font-size:12px;min-height:34px;resize:vertical}
+details.nx-bank-result summary{cursor:pointer}
 `;
 
 function BankSyncAccountRow({ account, nexoraAccounts, busy, onSave, onSync }) {
   const today = new Date().toISOString().slice(0, 10);
   const [accountId, setAccountId] = useState(account.accountId || "");
   const [importFrom, setImportFrom] = useState(account.importFrom || today);
-  const dirty = (accountId || null) !== (account.accountId || null) || (accountId && importFrom !== (account.importFrom || ""));
+  const savedPatterns = bankSyncPatternsText(account.ignorePatterns);
+  const [patterns, setPatterns] = useState(savedPatterns);
+  const dirty = (accountId || null) !== (account.accountId || null) || (accountId && importFrom !== (account.importFrom || "")) || patterns.trim() !== savedPatterns;
   const result = account.lastResult;
+  const samples = bankSyncSampleLines(result);
   return (
     <div className="nx-bank-row">
       <div className="nx-bank-label">
@@ -39208,9 +39230,21 @@ function BankSyncAccountRow({ account, nexoraAccounts, busy, onSave, onSync }) {
           <input type="date" value={importFrom} max={today} disabled={busy} onChange={(e) => setImportFrom(e.target.value)} aria-label="Importer à partir du" />
         </label>
       )}
-      <button type="button" disabled={busy || !dirty || (accountId && !importFrom)} onClick={() => onSave(account, accountId || null, accountId ? importFrom : null)}>Enregistrer</button>
+      {accountId && (
+        <label className="nx-bank-ignore" title="Une opération dont le libellé contient l'un de ces textes (sans accents ni majuscules) n'est ni importée ni rapprochée. Un texte par ligne.">
+          Libellés à ignorer
+          <textarea rows={2} value={patterns} disabled={busy} placeholder="ex. FACTURE CARTE A DEBIT DIFFERE" onChange={(e) => setPatterns(e.target.value)} aria-label="Libellés à ignorer" />
+        </label>
+      )}
+      <button type="button" disabled={busy || !dirty || (accountId && !importFrom)} onClick={() => onSave(account, accountId || null, accountId ? importFrom : null, patterns)}>Enregistrer</button>
       {account.accountId && account.connected && <button type="button" disabled={busy || dirty} onClick={() => onSync([account.accountKey])}>Synchroniser</button>}
       {result && <div className={"nx-bank-result" + (result.error ? " is-error" : "")}>Dernier passage : {bankSyncResultLine(result)}</div>}
+      {samples.length > 0 && (
+        <details className="nx-bank-result">
+          <summary>Opérations écartées (échantillon)</summary>
+          {samples.map((line, i) => <div key={i}>{line}</div>)}
+        </details>
+      )}
     </div>
   );
 }
@@ -39240,8 +39274,8 @@ function BankSyncSettings({ pushToast }) {
     if (!window.confirm(`Déconnecter ${c.name} ? L'accès est fermé chez Enable Banking ; les opérations déjà importées et la liaison des comptes sont conservées.`)) return;
     guard(async () => { await bankSyncCall("POST", { action: "disconnect", aspspKey: c.aspspKey }); toast(`${c.name} déconnectée.`); load(); });
   };
-  const save = (account, accountId, importFrom) => guard(async () => {
-    await bankSyncCall("POST", { action: "link", accountKey: account.accountKey, accountId, importFrom });
+  const save = (account, accountId, importFrom, patterns) => guard(async () => {
+    await bankSyncCall("POST", { action: "link", accountKey: account.accountKey, accountId, importFrom, ignorePatterns: String(patterns || "").split("\n") });
     toast(accountId ? `${account.label} lié · import à partir du ${bankSyncDate(importFrom)}.` : `${account.label} ne sera pas importé.`);
     load();
   });
@@ -39319,7 +39353,7 @@ function BankSyncSettings({ pushToast }) {
               {!g.disconnected && <button type="button" disabled={busy} onClick={() => disconnect(g)}>Déconnecter</button>}
             </div>
             {g.accounts.map((a) => (
-              <BankSyncAccountRow key={`${a.accountKey}:${a.accountId}:${a.importFrom}`} account={a} nexoraAccounts={nexoraAccounts} busy={busy} onSave={save} onSync={sync} />
+              <BankSyncAccountRow key={`${a.accountKey}:${a.accountId}:${a.importFrom}:${(a.ignorePatterns || []).join("|")}`} account={a} nexoraAccounts={nexoraAccounts} busy={busy} onSave={save} onSync={sync} />
             ))}
             {!g.accounts.length && <div className="nx-bank-row">Aucun compte exposé par cette banque.</div>}
           </div>

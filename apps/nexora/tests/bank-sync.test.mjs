@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
-  accountKeyOf, aspspKeyOf, bankReportSection, buildImportedTransaction, consentStatus, describeSessionAccounts, findMerchantRule,
+  accountKeyOf, aspspKeyOf, bankReportSection, buildImportedTransaction, isIgnoredLabel, normalizeIgnorePatterns, consentStatus, describeSessionAccounts, findMerchantRule,
   maskIban, normalizeBankTransaction, pickBalance, planAccountSync, syncDateFrom, withExternalIds, UNCLASSIFIED
 } from "../lib/bank-sync.mjs";
 
@@ -162,6 +162,32 @@ test("fenêtre, consentement, solde", () => {
   assert.equal(consentStatus(null, now).state, "unknown");
   assert.deepEqual(pickBalance([{ balance_type: "CLAV", balance_amount: { amount: "10.004", currency: "EUR" } }, { balance_type: "CLBD", balance_amount: { amount: "1234.567", currency: "EUR" }, reference_date: "2026-10-02" }]), { amount: 1234.57, currency: "EUR", type: "CLBD", date: "2026-10-02" });
   assert.equal(pickBalance([]), null);
+});
+
+test("libellés ignorés : débit mensuel de la carte différée écarté, diagnostic des opérations en attente", () => {
+  assert.deepEqual(normalizeIgnorePatterns("FACTURE CARTE A DEBIT DIFFERE\n\n facture carte a débit différé ;Relevé CB"), ["FACTURE CARTE A DEBIT DIFFERE", "Relevé CB"]);
+  assert.throws(() => normalizeIgnorePatterns(["CB"]), /ignore_pattern_too_short/);
+  assert.throws(() => normalizeIgnorePatterns(Array.from({ length: 11 }, (_, i) => `motif ${i}`)), /ignore_patterns_too_many/);
+  assert.deepEqual(normalizeIgnorePatterns(null), []);
+  assert.equal(isIgnoredLabel({ merchant: "Facture Carte à Débit Différé", description: null }, ["carte a debit differe"]), true);
+  assert.equal(isIgnoredLabel({ merchant: "CB Boulangerie", description: null }, ["carte a debit differe"]), false);
+  const existing = [{ transaction_id: "regul", account_id: "courant_ce", signed_amount: -1454.61, bank_date: "2026-11-04", transaction_type: "Transfert", reconciled: false }];
+  const plan = planAccountSync({
+    accountKey: "k", accountId: "courant_ce", importFrom: "2026-09-28", existing, rules: [], ignorePatterns: ["FACTURE CARTE A DEBIT DIFFERE"],
+    bankTransactions: [
+      bankTx({ entry_reference: "F1", transaction_amount: { amount: "1460.20" }, booking_date: "2026-11-04", transaction_date: "2026-11-04", creditor: null, remittance_information: ["FACTURE CARTE A DEBIT DIFFERE"] }),
+      bankTx({ entry_reference: "P1", status: "PDNG", creditor: { name: "CB Carrefour" } }),
+      bankTx({ entry_reference: "P2", status: "PDNG", creditor: { name: "CB Sncf" } }),
+      bankTx({ entry_reference: "Z", transaction_amount: { amount: "0" } }),
+    ],
+  });
+  assert.deepEqual([plan.create.length, plan.reconcile.length], [0, 0], "ni créé, ni rapproché à la régularisation");
+  assert.equal(plan.skipped.ignored, 1);
+  assert.equal(plan.skipped.invalid, 1);
+  assert.deepEqual(plan.skipped.statuses, { PDNG: 2 });
+  assert.deepEqual(plan.samples.pending.map((s) => s.label), ["CB Carrefour", "CB Sncf"]);
+  assert.equal(plan.samples.pending[0].amount, -12.5);
+  assert.deepEqual(plan.samples.ignored, [{ date: "2026-11-04", amount: -1460.2, label: "FACTURE CARTE A DEBIT DIFFERE" }]);
 });
 
 test("rapport du matin : alertes d'expiration et d'erreur, jamais de doublon d'alerte", () => {
