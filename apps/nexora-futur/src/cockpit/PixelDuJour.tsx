@@ -106,3 +106,19 @@ export function PixelDuJour({ jour, setJour, aujourdhui }: { jour: string; setJo
     </section>
   );
 }
+
+// Semaine des habitudes : sept mini-mosaïques, un clic choisit le jour.
+const lundiDe = (x: string) => ajouterJours(x, -((new Date(`${x}T12:00:00Z`).getUTCDay() + 6) % 7));
+export function SemaineHabitudes({ jour, setJour, aujourdhui }: { jour: string; setJour: (j: string) => void; aujourdhui: string }) {
+  const { d } = useDonnees();
+  const semaine = Array.from({ length: 7 }, (_, i) => ajouterJours(lundiDe(jour), i));
+  return (
+    <div className="hp-sem" role="group" aria-label="Semaine des habitudes">
+      {semaine.map((x) => { const e = etatsDuJour(d.themesHabitudes, d.journalHabitudes, d.nonApplicables, x); return (
+        <button key={x} type="button" className={`hp-j ${x === jour ? "sel" : ""}`} onClick={() => setJour(x)} aria-pressed={x === jour}>
+          <Mosaique themes={d.themesHabitudes} journal={d.journalHabitudes} nonApplicables={d.nonApplicables} jour={x} taille={6} futur={x > aujourdhui} />
+          <span>{new Date(`${x}T12:00:00Z`).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", timeZone: "UTC" })}<small className="mono">{x > aujourdhui ? "—" : `${e.faites}/${e.total}`}</small></span>
+        </button>); })}
+    </div>
+  );
+}

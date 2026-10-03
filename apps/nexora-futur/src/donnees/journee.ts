@@ -69,3 +69,17 @@ export function pointsAttention(taches: Tache[], jour: string, cat: Catalogues):
     .forEach((t) => p.push({ genre: "focus", t, texte: "en focus" }));
   return p;
 }
+
+// Cadran (Ref #678) : 24 h sur un tour, midi en haut.
+export const angleMinute = (m: number) => ((m / 60 - 12) / 24) * 2 * Math.PI - Math.PI / 2;
+// Minute pointée sur le cadran (dx, dy depuis le centre), calée au quart d'heure.
+export function minuteDuPoint(dx: number, dy: number) {
+  const tour = (Math.atan2(dy, dx) + Math.PI / 2) / (2 * Math.PI);
+  const m = ((tour * 24 + 12) % 24 + 24) % 24 * 60;
+  return Math.round(m / 15) * 15 % (24 * 60);
+}
+// Premier créneau libre de `duree` minutes à partir de `depuis` (quart d'heure suivant), avant `fin`.
+export function premierCreneau(ev: { debut: number; fin: number }[], depuis: number, duree = 60, fin = 21 * 60): number | null {
+  for (let m = Math.ceil(depuis / 15) * 15; m + duree <= fin; m += 15) if (!ev.some((e) => m < e.fin && m + duree > e.debut)) return m;
+  return null;
+}

@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Donnees } from "../donnees/magasin";
 import { ErreurCorps, type AccesCorps, type RessourceCorps } from "../donnees/source";
-import { couleursCase, fondCase, etatsDuJour } from "../donnees/habitudes";
+import { couleursCase, fondCase } from "../donnees/habitudes";
 import { ajouterJours } from "../donnees/modele";
 import {
   MESURES, PERIODES_SPORT, activitesDe, avancementObjectifs, calendrier, couleurSport, duree, formaterValeur, graduationsRondes, ilYa, nomsSports, resume, seriesEmpilees, filtrer,
@@ -13,7 +13,7 @@ import {
 import { MESURES_SANTE, formaterSante, graduationsSante, libellePearson, mesureSante, relevesDe, santeSport, serieSante, type Releve } from "../donnees/sante";
 import { alignement, dateFr, ecartJours, matriceCss, photoDroite, photosDe, trierPhotos, type Photo } from "../donnees/photos";
 import { Bouton, Cartouche, Etat, Segment, Surtitre } from "../composants";
-import { Mosaique, PixelDuJour } from "./PixelDuJour";
+import { PixelDuJour, SemaineHabitudes } from "./PixelDuJour";
 
 type Onglet = "habitudes" | "sport" | "sante" | "photos";
 
@@ -71,7 +71,6 @@ function Habitudes({ d }: { d: Donnees }) {
   const theme = d.themesHabitudes.find((t) => t.id === themeId) || d.themesHabitudes[0];
   const [mois, setMois] = useState(auj.slice(0, 7));
   const lundi = (x: string) => { const dow = (new Date(`${x}T12:00:00Z`).getUTCDay() + 6) % 7; return ajouterJours(x, -dow); };
-  const semaine = Array.from({ length: 7 }, (_, i) => ajouterJours(lundi(jour), i));
   const cases = useMemo(() => {
     const premier = `${mois}-01`; const debut = lundi(premier);
     return Array.from({ length: 42 }, (_, i) => { const x = ajouterJours(debut, i); return { x, dans: x.slice(0, 7) === mois, fond: theme ? fondCase(couleursCase(theme, d.journalHabitudes, x), "") : "" }; });
@@ -85,13 +84,7 @@ function Habitudes({ d }: { d: Donnees }) {
     <div className="co-hab">
       <div className="co-col">
         <PixelDuJour jour={jour} setJour={setJour} aujourdhui={auj} />
-        <div className="hp-sem" role="group" aria-label="Semaine des habitudes">
-          {semaine.map((x) => { const e = etatsDuJour(d.themesHabitudes, d.journalHabitudes, d.nonApplicables, x); return (
-            <button key={x} type="button" className={`hp-j ${x === jour ? "sel" : ""}`} onClick={() => setJour(x)} aria-pressed={x === jour}>
-              <Mosaique themes={d.themesHabitudes} journal={d.journalHabitudes} nonApplicables={d.nonApplicables} jour={x} taille={6} futur={x > auj} />
-              <span>{new Date(`${x}T12:00:00Z`).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", timeZone: "UTC" })}<small className="mono">{x > auj ? "—" : `${e.faites}/${e.total}`}</small></span>
-            </button>); })}
-        </div>
+        <SemaineHabitudes jour={jour} setJour={setJour} aujourdhui={auj} />
       </div>
       <section className="panneau co-heat" aria-label="Heat map des habitudes">
         <div className="sy-tete">
