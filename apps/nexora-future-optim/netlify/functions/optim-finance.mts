@@ -1,14 +1,13 @@
-// Finances (Ref #659) : relais vers nexora-project, sans secret KDM360.
-// Jeton Firebase vérifié ici (uid = NEXORA_USER_UID) puis transmis tel quel ;
-// nexora-project le revérifie. Routes et corps : voir _partage/relais-finance.
+// Finances (Ref #659, #721). Jeton Firebase vérifié ici (uid = NEXORA_USER_UID).
+// Avec KDM360_SUPABASE_SECRET_KEY dans l'environnement d'Optim : Supabase KDM360
+// en direct (_partage/finance-directe, sevrage de Nexora). Sans elle : relais vers
+// nexora-project, qui revérifie le jeton. Routes et corps : _partage/relais-finance.
 import type { Config } from "@netlify/functions";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { router } from "./_partage/relais-finance.js";
+import { json, servirFinance } from "./_partage/finance-directe.js";
 
 declare const Netlify: { env: { get(name: string): string | undefined } };
-
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 
 function app() {
   if (getApps().length) return getApps()[0];
@@ -31,18 +30,7 @@ export default async (req: Request) => {
 
   const url = new URL(req.url);
   const corps = req.method === "PATCH" ? await req.json().catch(() => null) : null;
-  const r = router(req.method, url.pathname, url.searchParams, corps);
-  if (!r.ok) return json({ ok: false, error: r.erreur }, r.statut);
-  try {
-    const amont = await fetch(r.url, {
-      method: r.methode, body: r.corps, signal: AbortSignal.timeout(9_500), // sous la limite de 10 s d'une fonction Netlify : erreur lisible
-      headers: { authorization: `Bearer ${jeton}`, accept: "application/json", ...(r.corps ? { "content-type": "application/json" } : {}) },
-    });
-    const texte = await amont.text();
-    return new Response(texte, { status: amont.status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
-  } catch (e) {
-    return json({ ok: false, error: "finance_relay_failed", detail: e instanceof Error ? e.message : String(e) }, 502);
-  }
+  return servirFinance({ methode: req.method, chemin: url.pathname, params: url.searchParams, corps, jeton }, (nom) => Netlify.env.get(nom));
 };
 
 export const config: Config = { path: ["/api/optim/finance/*"], method: ["GET", "PATCH"] };
