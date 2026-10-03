@@ -12,11 +12,19 @@ const AUTORISES: string[] = ["donnees/ecriture-firebase.ts"];
 function fichiers(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {
     const p = path.join(dir, n);
-    return statSync(p).isDirectory() ? fichiers(p) : /\.(ts|tsx)$/.test(n) ? [p] : [];
+    return statSync(p).isDirectory() ? fichiers(p) : /\.(ts|tsx|mts)$/.test(n) ? [p] : [];
   });
 }
 
+// Fonctions serveur : aucune écriture Firestore (firebase-admin) au lot 3.
+const ECRITURES_ADMIN = /\.(set|update|delete|create|add)\(|batch\(|runTransaction|bulkWriter/;
+
 describe("lecture seule", () => {
+  it("aucune écriture Firestore dans les fonctions serveur", () => {
+    const racine = path.resolve(__dirname, "../netlify/functions");
+    const fautifs = fichiers(racine).filter((f) => ECRITURES_ADMIN.test(readFileSync(f, "utf8")));
+    expect(fautifs).toEqual([]);
+  });
   it("aucune fonction d'écriture Firestore dans src/", () => {
     const racine = path.resolve(__dirname, "../src");
     const fautifs = fichiers(racine)

@@ -26,7 +26,7 @@ try {
   const archive = () => page.evaluate(() => window.__nexoraDemo.valeur("nexora:taskArchive"));
   const capture = (n) => page.screenshot({ path: `${sortie}/${n}.png` });
 
-  etape = "chargement"; await page.goto(`http://127.0.0.1:${PORT}/`);
+  etape = "chargement"; await page.goto(`http://127.0.0.1:${PORT}/taches`);
   await page.getByRole("grid", { name: "Tâches" }).waitFor();
   await capture("1-liste");
   assert.ok(await page.getByText("PV Contrôles DREAL").isVisible());
@@ -118,6 +118,33 @@ try {
   await page.goto(`http://127.0.0.1:${PORT}/?t=t12`);
   await page.getByText("Événement Google Calendar").waitFor();
   assert.ok(await page.locator("#i-statut").isDisabled());
+
+  etape = "fil du jour : briefing et à caser"; console.log("→", etape);
+  await page.goto(`http://127.0.0.1:${PORT}/?m=matin`);
+  await page.getByText("Briefing de 7 h · généré par l'assistant").waitFor();
+  assert.ok(await page.getByText("412 €").isVisible(), "reste à dépenser du rapport");
+  const bac = page.getByRole("region", { name: "À caser aujourd'hui" });
+  await bac.getByText("Demande lame pour piste d'accès").waitFor();
+  await capture("6-fil-matin");
+  const frise = page.locator(".fil-heures");
+  const boite = await frise.boundingBox();
+  await bac.locator(".fil-tache", { hasText: "Demande lame" }).dragTo(frise, { targetPosition: { x: boite.width / 2, y: 54 * 3 + 5 } });
+  await page.waitForTimeout(250);
+  const casee = (await taches()).find((t) => t.id === "t5");
+  const auj = await page.evaluate(() => new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()));
+  assert.equal(casee.end, auj, "replanifiée aujourd'hui");
+  assert.match(casee.startTime, /^\d{2}:(00|15|30|45)$/, "heure calée au quart d'heure");
+  await page.locator(".fil-ev", { hasText: "Demande lame" }).waitFor();
+
+  etape = "fil du jour : bilan du soir et semaine"; console.log("→", etape);
+  await page.getByRole("radio", { name: "Soir" }).click();
+  assert.match(page.url(), /m=soir/);
+  await page.locator(".fil-glisse", { hasText: "Demande lame" }).getByRole("button", { name: "Demain" }).click();
+  await page.waitForTimeout(250);
+  assert.ok((await taches()).find((t) => t.id === "t5").end > auj, "reportée à demain");
+  await page.getByRole("radio", { name: "Semaine" }).click();
+  assert.equal(await page.locator(".fil-sjour").count(), 7);
+  await capture("7-fil-semaine");
 
   etape = "mode sombre"; console.log("→", etape);
   await page.goto(`http://127.0.0.1:${PORT}/projets/p-ctex6?t=t2`);
