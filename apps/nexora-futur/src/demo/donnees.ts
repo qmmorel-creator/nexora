@@ -7,14 +7,19 @@ export function donneesDemo(j = aujourdhuiParis()): Record<string, unknown> {
   return {
     "nexora:projectFolders": [{ id: "f-chantiers", name: "Chantiers", parentId: null, order: 0 }, { id: "f-com", name: "Communication", parentId: null, order: 1 }, { id: "folder-a-trier", name: "À trier", parentId: null }],
     "nexora:projects": [
-      { id: "p-ctex6", name: "CTEX6", color: "#d64545", folderId: "f-chantiers" },
+      { id: "p-ctex6", name: "CTEX6", color: "#d64545", folderId: "f-chantiers", budgetInitial: 50000 },
       { id: "p-lot2b", name: "Lot 2B", color: "#7c5cd6", folderId: "f-chantiers", disabledStatusIds: ["s2"] },
       { id: "p-com", name: "Communication", color: "#d99a2b", folderId: "f-com" },
       { id: "p-agenda", name: "Agenda Google", color: "#3b82f6", folderId: "folder-a-trier", gcalSource: true },
     ],
     "nexora:statuses": [{ id: "s1", name: "À planifier", color: "#64748b" }, { id: "s2", name: "Attente tiers", color: "#d97706" }, { id: "s3", name: "En cours", color: "#0ea5e9" }, { id: "s5", name: "Terminé", color: "#16a34a" }, { id: "s6", name: "Information", color: "#94a3b8" }],
     "nexora:taskTypes": [{ id: "tt1", name: "Tâches", locked: true }, { id: "tt2", name: "Planning", locked: true }, { id: "tt3", name: "Réunions", locked: true }, { id: "tt4", name: "Information", locked: true, restrictedStatusId: "s6" }],
-    "nexora:teamMembers": [{ id: "m1", name: "Quentin Morel" }, { id: "m2", name: "Vincent Bernard" }, { id: "m3", name: "Maïa Sonnier" }, { id: "m4", name: "Anne-Laure Masson" }],
+    "nexora:teamMembers": [{ id: "m1", name: "Quentin Morel", teamIds: ["eq1"] }, { id: "m2", name: "Vincent Bernard", teamIds: ["eq1"] }, { id: "m3", name: "Maïa Sonnier", teamIds: ["eq1"] }, { id: "m4", name: "Anne-Laure Masson", teamIds: ["eq2"] }],
+    "nexora:teams": [{ id: "eq1", name: "Travaux" }, { id: "eq2", name: "Communication" }],
+    "nexora:expenses": [{ id: "x1", projectId: "p-ctex6", amount: 22500, status: "payee" }, { id: "x2", projectId: "p-ctex6", amount: 8700, status: "facturee" }],
+    "nexora:activityLog": [{ id: "l1", type: "reassigned", taskId: "t1", taskTitle: "Documents FOR-0129", projectId: "p-ctex6", to: "Vincent Bernard", at: new Date(Date.now() - 86400000).toISOString() }, { id: "l2", type: "deadlineChanged", taskId: "t3", taskTitle: "Visite DREAL", projectId: "p-ctex6", toDate: J(4), at: new Date(Date.now() - 3 * 86400000).toISOString() }],
+    "nexora:habitThemes": [{ id: "th1", name: "Santé", color: "#16a34a", habits: [{ id: "h1", name: "Eau 2 L" }, { id: "h2", name: "Lecture" }, { id: "h3", name: "Méditation" }] }],
+    "nexora:habitLog": Array.from({ length: 60 }, (_, i) => ({ habitId: ["h1", "h2", "h3"][i % 3], date: J(-Math.floor(i / 2)) })).filter((e, i, a) => a.findIndex((x) => x.habitId === e.habitId && x.date === e.date) === i),
     "nexora:tasks": [
       { id: "t1", title: "Documents FOR-0129", projectId: "p-ctex6", statusId: "s3", taskTypeId: "tt1", start: J(-70), end: J(-44), assignee: "Vincent Bernard", criticality: "urgent", progress: 60, checklist: [{ id: "c1", text: "Plan de contrôle", done: true }, { id: "c2", text: "Notes de calcul", done: false }] },
       { id: "t2", title: "PV Contrôles DREAL", projectId: "p-ctex6", statusId: "s1", taskTypeId: "tt1", start: J(-44), end: J(-30), assignee: "Vincent Bernard", criticality: "urgent", dependsOn: ["t1"], desc: "Compiler les PV des contrôles réglementaires avant la visite DREAL." },
