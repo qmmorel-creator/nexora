@@ -1,6 +1,7 @@
 import type { Config } from "@netlify/functions";
 import { disconnect, listFrenchBanks, readStatus, requireEnableBankingConfig, runSync, startAuthorization, updateLink } from "./_shared/bank-sync.js";
 import { getFinanceCatalogs } from "./_shared/finance.js";
+import { normalizeIgnorePatterns } from "../../lib/bank-sync.mjs";
 import { requireOwnerFinance } from "./_shared/finance-owner.js";
 import { json } from "./_shared/nexora.js";
 
@@ -11,7 +12,8 @@ import { json } from "./_shared/nexora.js";
 //   - banks       : banques françaises proposées par Enable Banking ;
 //   - connect     : ouvre l'autorisation d'une banque → `url` vers la banque ;
 //   - link        : compte bancaire → compte Nexora (`accountId`, nul pour
-//                   ignorer) et date de départ `importFrom` ;
+//                   ignorer), date de départ `importFrom` et libellés à
+//                   ignorer `ignorePatterns` (facultatif) ;
 //   - sync        : synchronise tout, ou `accountKeys` ;
 //   - disconnect  : ferme la session d'une banque (`aspspKey`).
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -42,8 +44,11 @@ export default async (req: Request) => {
         if (!catalogs.accounts.some((a) => a.account_id === accountId)) return json({ ok: false, error: "account_not_found" }, 400);
         if (!importFrom || !DATE.test(importFrom)) return json({ ok: false, error: "import_from_required" }, 400);
       }
-      const link = await updateLink(finance, accountKey, { account_id: accountId, import_from: accountId ? importFrom : null });
-      return json({ ok: true, link: { accountKey: link.account_key, accountId: link.account_id, importFrom: link.import_from } });
+      const changes: Record<string, unknown> = { account_id: accountId, import_from: accountId ? importFrom : null };
+      // Absent : libellés ignorés inchangés.
+      if (body.ignorePatterns !== undefined) changes.ignore_patterns = normalizeIgnorePatterns(body.ignorePatterns);
+      const link = await updateLink(finance, accountKey, changes);
+      return json({ ok: true, link: { accountKey: link.account_key, accountId: link.account_id, importFrom: link.import_from, ignorePatterns: link.ignore_patterns || [] } });
     }
 
     if (!bank.config) return json({ ok: false, error: "enable_banking_configuration_missing", missing: bank.missing }, 503);
@@ -64,7 +69,7 @@ export default async (req: Request) => {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const clientError = /(_required|_not_found|^invalid_|unsupported_)/.test(message);
+    const clientError = /(_required|_not_found|^invalid_|unsupported_|_too_)/.test(message);
     return json({ ok: false, error: clientError ? message : "bank_sync_failed", detail: clientError ? undefined : message }, clientError ? 400 : 502);
   }
 };

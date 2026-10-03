@@ -171,16 +171,62 @@ export function buildImportedTransaction(tx, accountId, rule) {
   };
 }
 
+// Libellés à ignorer d'un compte lié (#677) : ex. le débit mensuel de la carte
+// à débit différé, déjà porté par la « Régularisation carte différée ». Une
+// opération dont le libellé contient l'un d'eux (sans accents ni casse) n'est
+// ni créée ni rapprochée. Au plus 10 libellés de 4 à 80 caractères.
+export function normalizeIgnorePatterns(input) {
+  const list = Array.isArray(input) ? input : String(input || "").split(/[\n;]+/);
+  const out = [];
+  for (const item of list) {
+    const value = String(item ?? "").replace(/\s+/g, " ").trim();
+    if (!value) continue;
+    if (value.length < 4) throw new Error("ignore_pattern_too_short");
+    if (value.length > 80) throw new Error("ignore_pattern_too_long");
+    if (!out.some((p) => fold(p) === fold(value))) out.push(value);
+  }
+  if (out.length > 10) throw new Error("ignore_patterns_too_many");
+  return out;
+}
+
+export function isIgnoredLabel(tx, patterns) {
+  const haystack = fold(`${tx.merchant} ${tx.description || ""}`);
+  return (patterns || []).some((p) => fold(p) && haystack.includes(fold(p)));
+}
+
+const SAMPLE_SIZE = 10;
+const sampleOf = (raw) => ({
+  status: String(raw?.status || ""),
+  date: raw?.booking_date || raw?.value_date || raw?.transaction_date || null,
+  amount: Number(raw?.transaction_amount?.amount) * (String(raw?.credit_debit_indicator || "").toUpperCase() === "CRDT" ? 1 : -1),
+  label: clean((raw?.credit_debit_indicator === "CRDT" ? raw?.debtor?.name : raw?.creditor?.name) || (Array.isArray(raw?.remittance_information) ? raw.remittance_information.join(" ") : raw?.remittance_information) || raw?.note).slice(0, 120),
+});
+
 // Plan d'un compte : ce qui est déjà là, ce qui se rapproche, ce qui se crée.
 // `existing` : opérations Nexora du compte autour de la fenêtre importée.
-export function planAccountSync({ accountKey, accountId, importFrom, bankTransactions, existing, rules }) {
+// `skipped.statuses` et `samples` : diagnostic des opérations écartées
+// (statut bancaire, échantillon date / montant / libellé).
+export function planAccountSync({ accountKey, accountId, importFrom, bankTransactions, existing, rules, ignorePatterns = [] }) {
   if (!accountId) throw new Error("account_id_required");
-  const skipped = { pending: 0, beforeImportFrom: 0, otherCurrency: 0 };
+  const skipped = { pending: 0, beforeImportFrom: 0, otherCurrency: 0, ignored: 0, invalid: 0, statuses: {} };
+  const samples = { pending: [], ignored: [] };
   const normalized = [];
   for (const raw of bankTransactions || []) {
     const tx = normalizeBankTransaction(raw);
-    if (!tx) { skipped.pending += 1; continue; }
+    if (!tx) {
+      const status = String(raw?.status || "BOOK").toUpperCase();
+      if (status === "BOOK") { skipped.invalid += 1; continue; }
+      skipped.pending += 1;
+      skipped.statuses[status] = (skipped.statuses[status] || 0) + 1;
+      if (samples.pending.length < SAMPLE_SIZE) samples.pending.push(sampleOf(raw));
+      continue;
+    }
     if (tx.currency !== "EUR") { skipped.otherCurrency += 1; continue; }
+    if (isIgnoredLabel(tx, ignorePatterns)) {
+      skipped.ignored += 1;
+      if (samples.ignored.length < SAMPLE_SIZE) samples.ignored.push({ date: tx.bankDate, amount: tx.amount, label: tx.merchant.slice(0, 120) });
+      continue;
+    }
     normalized.push(tx);
   }
   const identified = withExternalIds(accountKey, normalized);
@@ -192,7 +238,7 @@ export function planAccountSync({ accountKey, accountId, importFrom, bankTransac
   const cancelled = new Set(ledger.map((row) => row.cancels_transaction_id).filter(Boolean));
   const candidates = ledger.filter((row) => !NOT_BANK_MOVEMENTS.has(row.transaction_type) && !cancelled.has(row.transaction_id));
 
-  const plan = { create: [], reconcile: [], already: 0, skipped };
+  const plan = { create: [], reconcile: [], already: 0, skipped, samples };
   for (const tx of identified) {
     const imported = byId.get(tx.transactionId);
     // Créée lors d'un passage interrompu avant son rapprochement : on le termine.

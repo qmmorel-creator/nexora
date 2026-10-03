@@ -8,7 +8,8 @@ export type SyncPlan = {
   create: Array<{ transaction: Record<string, unknown>; reconciliationId: string; reconciliationDate: string; ruleId: string | null }>;
   reconcile: Array<{ transactionId: string; reconciliationId: string; reconciliationDate: string; bank: { date: string; amount: number; merchant: string } }>;
   already: number;
-  skipped: { pending: number; beforeImportFrom: number; otherCurrency: number };
+  skipped: { pending: number; beforeImportFrom: number; otherCurrency: number; ignored: number; invalid: number; statuses: Record<string, number> };
+  samples: { pending: Array<Record<string, unknown>>; ignored: Array<Record<string, unknown>> };
 };
 export function aspspKeyOf(name: string, country?: string): string;
 export function accountKeyOf(account: Record<string, any>): string;
@@ -18,7 +19,9 @@ export function normalizeBankTransaction(tx: Record<string, any>): { bankId: str
 export function withExternalIds(accountKey: string, normalized: Array<Record<string, any>>): Array<Record<string, any>>;
 export function findMerchantRule(rules: Array<Record<string, any>>, tx: Record<string, any>, accountId: string): Record<string, any> | null;
 export function buildImportedTransaction(tx: Record<string, any>, accountId: string, rule: Record<string, any> | null): Record<string, unknown>;
-export function planAccountSync(input: { accountKey: string; accountId: string; importFrom: string | null; bankTransactions: unknown[]; existing: ExistingTransaction[]; rules: Array<Record<string, any>> }): SyncPlan;
+export function planAccountSync(input: { accountKey: string; accountId: string; importFrom: string | null; bankTransactions: unknown[]; existing: ExistingTransaction[]; rules: Array<Record<string, any>>; ignorePatterns?: string[] }): SyncPlan;
+export function normalizeIgnorePatterns(input: unknown): string[];
+export function isIgnoredLabel(tx: { merchant: string; description?: string | null }, patterns: string[]): boolean;
 export function syncDateFrom(input: { importFrom: string | null; lastSyncedAt: string | null; today: string }): string;
 export function consentStatus(validUntil: string | null | undefined, now?: Date): { state: "ok" | "soon" | "expired" | "unknown"; daysLeft: number | null };
 export function bankReportSection(connections: unknown, now?: Date): {

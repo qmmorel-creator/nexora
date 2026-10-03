@@ -57,6 +57,10 @@ create table if not exists public.finance_bank_account_links (
   updated_at timestamptz not null default now()
 );
 
+-- Libellés à ignorer d'un compte lié (ex. débit mensuel de la carte à débit
+-- différé, déjà porté par la « Régularisation carte différée »).
+alter table public.finance_bank_account_links add column if not exists ignore_patterns text[] not null default '{}';
+
 comment on table public.finance_bank_auth_requests is 'Demandes d''autorisation Enable Banking en cours (#677) ; accès serveur uniquement.';
 comment on table public.finance_bank_connections is 'Sessions Enable Banking par banque (#677) ; accès serveur uniquement.';
 comment on table public.finance_bank_account_links is 'Liaison compte bancaire Enable Banking ↔ compte Nexora (#677) ; accès serveur uniquement.';
