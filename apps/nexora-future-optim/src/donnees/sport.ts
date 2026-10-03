@@ -215,3 +215,22 @@ export function calendrier(rows: Activite[], annee: string, ordre: string[] = []
   }
   return { jours, semaines: jours.length ? jours[jours.length - 1].semaine + 1 : 0, joursActifs: jours.filter((j) => j.nb).length };
 }
+
+// --- Répartition « 1 carré = 1 h » (retour du 03/10/2026) --------------------
+// Port de sportWaffle de Nexora (index.html.part-003) : heures totales par sport
+// sur la période, un carré par heure entamée ; le dernier carré est rempli au
+// prorata (`dernier` entre 0 et 1). Au-delà de MAX_CARRES pour un sport, on tronque.
+export const MAX_CARRES = 2000;
+export function repartition(rows: Activite[], periode: PeriodeSport, jour: string, ordre: string[] = [], sports: string[] = []) {
+  const heures = new Map<string, number>(); let manquantes = 0;
+  for (const r of filtrer(rows, periode, jour, sports)) {
+    const v = valeurMesure(r, "total");
+    if (v === null) { manquantes++; continue; }
+    heures.set(r.sport, (heures.get(r.sport) || 0) + v);
+  }
+  const noms = [...heures.keys()];
+  const parSport = [...heures.entries()].filter(([, h]) => h > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr"))
+    .map(([nom, h]) => ({ nom, heures: h, carres: Math.ceil(h), dernier: h - Math.ceil(h) + 1, couleur: couleurSport(nom, ordre, noms) }));
+  return { parSport, total: parSport.reduce((t, s) => t + s.heures, 0), manquantes, tropGrand: parSport.some((s) => s.carres > MAX_CARRES) };
+}

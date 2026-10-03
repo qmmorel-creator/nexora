@@ -20,9 +20,10 @@ import { Reglages } from "./Reglages";
 import { GardeEcran } from "./Garde";
 import { compterTriage, Triage } from "./Triage";
 import { Archive } from "./Archive";
+import { Sport } from "./Sport";
 import { Phrase } from "./Phrase";
 
-const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["triage", "Triage"], ["phrase", "Phrase"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Suivi du budget"], ["archive", "Archive"]];
+const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["triage", "Triage"], ["phrase", "Phrase"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["sport", "Sport"], ["argent", "Suivi du budget"], ["archive", "Archive"]];
 
 function Fiche() {
   const { d, projet, statut, fini, retard, joursRetard, executer, jour } = useOptim();
@@ -128,6 +129,7 @@ function Interface({ email, demo }: { email: string; demo?: boolean }) {
   else if (ecran === "planning") contenu = <Planning email={email} allerJournee={() => aller("journee")} ouvrirProjet={(id) => aller("projets", id)} />;
   else if (ecran === "projets") contenu = <Projets projetId={route.segments[1] || null} email={email} ouvrirProjet={(id) => naviguer(`/projets/${encodeURIComponent(id)}`)} />;
   else if (ecran === "corps") contenu = <Corps />;
+  else if (ecran === "sport") contenu = <Sport />;
   else if (ecran === "argent") contenu = <Argent />;
   else if (ecran === "triage") contenu = <Triage />;
   else if (ecran === "phrase") contenu = <Phrase />;
