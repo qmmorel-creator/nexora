@@ -49,3 +49,11 @@ describe("préférences nexora:optimPrefs (#687)", () => {
     expect(normaliserCorps({ periode: 7, cartes: [{ id: "comp", titre: "", mesures: [] }] })).toMatchObject({ periode: 30, cartes: [CARTES_DEFAUT[0], CARTES_DEFAUT[1], { id: "comp", titre: "Composition corporelle", mesures: [] }, CARTES_DEFAUT[3]] });
   });
 });
+
+describe("Corps : sports et grandeur (retour du 03/10/2026)", () => {
+  it("sports masqués conservés, grandeur connue sinon durée", () => {
+    const c = normaliserPrefs({ corps: { sportsMasques: ["Vélo", 3, "Crossfit"], grandeurSport: "denivele" } }).corps;
+    expect(c.sportsMasques).toEqual(["Vélo", "Crossfit"]); expect(c.grandeurSport).toBe("denivele");
+    expect(normaliserPrefs({ corps: { grandeurSport: "vitesse" } }).corps.grandeurSport).toBe("duree");
+  });
+});

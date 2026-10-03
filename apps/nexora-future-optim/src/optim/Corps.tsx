@@ -7,7 +7,7 @@ import { ajouterJours } from "../donnees/modele";
 import { MESURES_SANTE, formaterSante, mesureSante, type Releve } from "../donnees/sante";
 import { couleurSport, nomsSports, type Activite } from "../donnees/sport";
 import { resumeMetrique, seaux, serieMetrique, type Seau } from "../donnees/corps";
-import { MAX_MESURES_CARTE, PERIODES_CORPS, REGROUPEMENTS, type CarteCorps, type PrefsCorps, type RegroupementCorps } from "../donnees/prefs";
+import { GRANDEURS_SPORT, MAX_MESURES_CARTE, PERIODES_CORPS, REGROUPEMENTS, type CarteCorps, type GrandeurSport, type PrefsCorps, type RegroupementCorps } from "../donnees/prefs";
 import { dateCourte, hm, jourCourt, MOIS_C, semaineIso, useOptim } from "./contexte";
 import { styleMesure, useCorps } from "./corps-donnees";
 import { useActionsHabitudes, useJour } from "./jour";
@@ -102,43 +102,53 @@ function Section({ id, titre, resume, ouvert, basculer, action, children }: { id
 }
 
 // Sport : minutes empilées par discipline, objectif proportionné à la période.
-function BlocSport({ activites, c, setReg }: { activites: Activite[]; c: PrefsCorps; setReg: (r: RegroupementCorps) => void }) {
+// Grandeur affichée (retour du 03/10/2026) : durée (min), distance (km) ou dénivelé (m).
+const GRANDEUR: Record<GrandeurSport, { lib: string; val: (a: Activite) => number; fmt: (v: number) => string; court: (v: number) => string }> = {
+  duree: { lib: "Durée", val: (a) => a.total || 0, fmt: (v) => hm(Math.round(v)), court: (v) => `${(v / 60).toFixed(1).replace(".", ",")} h` },
+  distance: { lib: "Distance", val: (a) => a.distance || 0, fmt: (v) => `${(Math.round(v * 10) / 10).toLocaleString("fr-FR")} km`, court: (v) => `${Math.round(v)} km` },
+  denivele: { lib: "Dénivelé", val: (a) => a.elevation || 0, fmt: (v) => `${Math.round(v).toLocaleString("fr-FR")} m`, court: (v) => `${Math.round(v)} m` },
+};
+function BlocSport({ activites: toutes, c, setReg, maj }: { activites: Activite[]; c: PrefsCorps; setReg: (r: RegroupementCorps) => void; maj: (p: Partial<PrefsCorps>) => void }) {
   const { jour, d } = useOptim();
-  const mode = c.regroupementSport, s = seaux(jour, c.periode, mode), ordre = nomsSports(activites);
-  const objSemaine = (d.objectifsSport.weeklyHours || 0) * 60;
+  const tousSports = nomsSports(toutes), masques = new Set(c.sportsMasques), G = GRANDEUR[c.grandeurSport];
+  const activites = toutes.filter((a) => !masques.has(a.sport));
+  const mode = c.regroupementSport, s = seaux(jour, c.periode, mode), ordre = tousSports;
+  const objSemaine = c.grandeurSport === "duree" ? (d.objectifsSport.weeklyHours || 0) * 60 : 0;
   const objectif = (x: Seau) => objSemaine * (mode === "jour" ? 1 / 7 : mode === "semaine" ? 1 : x.jours.length / 7);
-  const B = s.map((x) => { const par: Record<string, number> = {}; activites.filter((a) => a.date >= x.debut && a.date <= x.fin).forEach((a) => { par[a.sport] = (par[a.sport] || 0) + (a.total || 0); }); return { x, par, tot: Object.values(par).reduce((t, v) => t + v, 0) }; });
+  const B = s.map((x) => { const par: Record<string, number> = {}; activites.filter((a) => a.date >= x.debut && a.date <= x.fin).forEach((a) => { par[a.sport] = (par[a.sport] || 0) + G.val(a); }); return { x, par, tot: Object.values(par).reduce((t, v) => t + v, 0) }; });
   const W = 1240, H = 170, L = 6, R = 78, T = 18, Bm = 22, n = B.length;
   const max = Math.max(...B.map((b) => objectif(b.x)), ...B.map((b) => b.tot)) * 1.12 || 60;
   const slot = (W - L - R) / n, bw = Math.max(2, Math.min(34, slot * .62)), Y = (v: number) => T + (1 - v / max) * (H - T - Bm), pas = Math.max(1, Math.ceil(n / 14));
   const debutPeriode = ajouterJours(jour, -(c.periode - 1));
   const parSport: Record<string, { m: number; n: number }> = {};
-  activites.filter((a) => a.date >= debutPeriode && a.date <= jour).forEach((a) => { parSport[a.sport] = parSport[a.sport] || { m: 0, n: 0 }; parSport[a.sport].m += a.total || 0; parSport[a.sport].n++; });
+  activites.filter((a) => a.date >= debutPeriode && a.date <= jour).forEach((a) => { parSport[a.sport] = parSport[a.sport] || { m: 0, n: 0 }; parSport[a.sport].m += G.val(a); parSport[a.sport].n++; });
   const lundi = (() => { const dt = new Date(`${jour}T12:00:00Z`); return ajouterJours(jour, -((dt.getUTCDay() + 6) % 7)); })();
-  const semaine = activites.filter((a) => a.date >= lundi && a.date <= jour).reduce((t, a) => t + (a.total || 0), 0);
+  const semaine = activites.filter((a) => a.date >= lundi && a.date <= jour).reduce((t, a) => t + G.val(a), 0);
   const recentes = activites.filter((a) => a.date <= jour).slice(-6).reverse();
   return <>
-    <div className="hx-mrow2"><div className="hx-mhd"><small>Sport</small><b>{hm(Math.round(semaine))}{objSemaine > 0 && <span className="hx-dim"> / {d.objectifsSport.weeklyHours} h</span>}</b><span className="hx-dim">cette semaine</span>
+    <div className="ox-sports" role="group" aria-label="Sports affichés">{tousSports.map((k) => { const on = !masques.has(k); return <label key={k} className={`ox-toggle ${on ? "is-on" : ""}`} style={{ ["--c" as string]: couleurSport(k, ordre) }}><input type="checkbox" checked={on} onChange={() => maj({ sportsMasques: on ? [...c.sportsMasques, k] : c.sportsMasques.filter((x) => x !== k) })} /><i />{k}</label>; })}
+      <span className="ox-sp" /><div className="hx-seg is-xs" role="group" aria-label="Grandeur">{GRANDEURS_SPORT.map((g) => <button key={g} type="button" aria-pressed={c.grandeurSport === g} onClick={() => maj({ grandeurSport: g })}>{GRANDEUR[g].lib}</button>)}</div></div>
+    <div className="hx-mrow2"><div className="hx-mhd"><small>Sport · {G.lib.toLowerCase()}</small><b>{G.fmt(semaine)}{objSemaine > 0 && <span className="hx-dim"> / {d.objectifsSport.weeklyHours} h</span>}</b><span className="hx-dim">cette semaine</span>
       <div className="hx-seg is-xs">{REGROUPEMENTS.map((r) => <button key={r} type="button" aria-pressed={mode === r} onClick={() => setReg(r)}>{LIB_REG[r]}</button>)}</div></div>
       <div>
-        <svg className="hx-mc" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Minutes de sport par ${LIB_REG[mode].toLowerCase()}`}>
+        <svg className="hx-mc" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${G.lib} de sport par ${LIB_REG[mode].toLowerCase()}`}>
           <defs>{B.map((b, i) => { if (!b.tot) return null; const x = L + (i + .5) * slot - bw / 2, y = Y(b.tot), r = Math.min(4, bw / 2); return <clipPath key={i} id={`spk-${i}`}><path d={`M${x} ${Y(0)} V${y + r} Q${x} ${y} ${x + r} ${y} H${x + bw - r} Q${x + bw} ${y} ${x + bw} ${y + r} V${Y(0)} Z`} /></clipPath>; })}</defs>
           {[0, .5, 1].map((f) => <line key={f} x1={L} x2={W - R} y1={Y(max / 1.12 * f)} y2={Y(max / 1.12 * f)} stroke="#eef1f5" />)}
-          {objSemaine > 0 && mode !== "mois" && <><line x1={L} x2={W - R} y1={Y(objectif(B[0].x))} y2={Y(objectif(B[0].x))} stroke="#0e7490" strokeDasharray="4 4" opacity=".6" /><text x={W - R + 6} y={Y(objectif(B[0].x)) + 4} className="hx-mct">obj. {hm(Math.round(objectif(B[0].x)))}</text></>}
+          {objSemaine > 0 && mode !== "mois" && <><line x1={L} x2={W - R} y1={Y(objectif(B[0].x))} y2={Y(objectif(B[0].x))} stroke="#0e7490" strokeDasharray="4 4" opacity=".6" /><text x={W - R + 6} y={Y(objectif(B[0].x)) + 4} className="hx-mct">obj. {G.fmt(objectif(B[0].x))}</text></>}
           {B.map((b, i) => {
             const x = L + (i + .5) * slot - bw / 2; let y = Y(0);
             return <g key={b.x.cle}>
               {objSemaine > 0 && mode === "mois" && <line x1={x - 3} x2={x + bw + 3} y1={Y(objectif(b.x))} y2={Y(objectif(b.x))} stroke="#0e7490" strokeDasharray="3 3" opacity=".7" />}
-              {b.tot > 0 && <g clipPath={`url(#spk-${i})`} data-tip={`${titreSeau(b.x, mode)}|Total : ${hm(Math.round(b.tot))}${objSemaine ? ` sur un objectif de ${hm(Math.round(objectif(b.x)))}` : ""}|${Object.entries(b.par).map(([k, v]) => `${k} : ${hm(Math.round(v))}`).join(" · ")}`}>
+              {b.tot > 0 && <g clipPath={`url(#spk-${i})`} data-tip={`${titreSeau(b.x, mode)}|Total : ${G.fmt(b.tot)}${objSemaine ? ` sur un objectif de ${G.fmt(objectif(b.x))}` : ""}|${Object.entries(b.par).map(([k, v]) => `${k} : ${G.fmt(v)}`).join(" · ")}`}>
                 {ordre.map((k) => { const v = b.par[k] || 0; if (!v) return null; const h = Y(0) - Y(v); y -= h; return <rect key={k} x={x} y={y} width={bw} height={h} fill={couleurSport(k, ordre)} stroke="#fff" strokeWidth="1.5" />; })}
                 <rect x={x} y={Y(b.tot)} width={bw} height={Y(0) - Y(b.tot)} fill="transparent" /></g>}
-              {b.tot > 0 && n <= 26 && <text x={x + bw / 2} y={Y(b.tot) - 6} className="hx-mcl" textAnchor="middle">{(b.tot / 60).toFixed(1).replace(".", ",")} h</text>}
+              {b.tot > 0 && n <= 26 && <text x={x + bw / 2} y={Y(b.tot) - 6} className="hx-mcl" textAnchor="middle">{G.court(b.tot)}</text>}
               {i % pas === 0 && <text x={x + bw / 2} y={H - 6} className="hx-mct" textAnchor="middle">{libelleSeau(b.x, mode)}</text>}
             </g>;
           })}
           <line x1={L} x2={W - R} y1={Y(0)} y2={Y(0)} stroke="#c9ccd1" />
         </svg>
-        <div className="hx-sleg is-tot">{ordre.filter((k) => parSport[k]).map((k) => <span key={k}><i style={{ background: couleurSport(k, ordre) }} />{k} <b>{hm(Math.round(parSport[k].m))}</b> · {parSport[k].n} séance{parSport[k].n > 1 ? "s" : ""}</span>)}</div>
+        <div className="hx-sleg is-tot">{ordre.filter((k) => parSport[k] && (c.grandeurSport === "duree" || parSport[k].m > 0)).map((k) => <span key={k}><i style={{ background: couleurSport(k, ordre) }} />{k} <b>{G.fmt(parSport[k].m)}</b> · {parSport[k].n} séance{parSport[k].n > 1 ? "s" : ""}</span>)}</div>
       </div></div>
     {recentes.length > 0 && <table className="hx-stab"><thead><tr><th>Date</th><th>Sport</th><th>Séance</th><th>Durée</th><th>Distance</th><th>D+</th><th>FC moy.</th></tr></thead>
       <tbody>{recentes.map((a) => <tr key={a.id || a.date + a.title}><td>{jourCourt(a.date)} {dateCourte(a.date)}</td><td><i style={{ background: couleurSport(a.sport, ordre) }} />{a.sport}</td><td>{a.url ? <a href={a.url} target="_blank" rel="noreferrer noopener">{a.title}</a> : a.title}</td><td>{a.total ? hm(Math.round(a.total)) : "—"}</td><td>{a.distance ? `${String(a.distance).replace(".", ",")} km` : "—"}</td><td>{a.elevation ? `${a.elevation} m` : "—"}</td><td>{a.hr ? `${a.hr} bpm` : "—"}</td></tr>)}</tbody></table>}
@@ -146,14 +156,19 @@ function BlocSport({ activites, c, setReg }: { activites: Activite[]; c: PrefsCo
 }
 
 // Grille des habitudes : une case par jour, cliquable (règles de Nexora).
-function GrilleHabitudes({ n }: { n: number }) {
+// Thèmes repliables (retour du 03/10/2026) : repli mémorisé dans prefs.corps.replies (« theme:<id> »).
+function GrilleHabitudes({ n, replies, basculer }: { n: number; replies: string[]; basculer: (cle: string) => void }) {
   const { etats, couleurHabitude, jour, d } = useJour();
   const act = useActionsHabitudes();
   const jours = Array.from({ length: n }, (_, i) => ajouterJours(jour, i - n + 1));
   const parJour = new Map(jours.map((x) => [x, etats(x)]));
   const cellules: ReactNode[] = [<span key="c0" />, ...jours.map((x, i) => <span key={"d" + x} className={`hx-hgd ${x === jour ? "is-today" : ""}`}>{n <= 30 || i % 7 === 0 ? Number(x.slice(8)) : ""}</span>), <span key="c1" />];
   d.themesHabitudes.filter((t) => t.habits.length).forEach((t) => {
-    cellules.push(<span key={"t" + t.id} className="hx-hgl is-theme" style={{ ["--c" as string]: t.color }}><b>{t.name}</b><small>{t.selectionMode === "single" ? "un seul choix" : ""}</small></span>, ...jours.map((x) => <span key={t.id + x} />), <span key={t.id + "r"} />);
+    const ferme = replies.includes("theme:" + t.id);
+    const faitsTheme = jours.map((x) => parJour.get(x)!.parTheme.find((p) => p.theme.id === t.id)?.habitudes.filter((y) => y.etat === "fait" || y.etat === "partiel").length || 0);
+    cellules.push(<button key={"t" + t.id} type="button" className="hx-hgl is-theme ox-hgt" aria-expanded={!ferme} style={{ ["--c" as string]: t.color }} onClick={() => basculer("theme:" + t.id)}><span className="hx-chev">{ferme ? "▸" : "▾"}</span><b>{t.name}</b><small>{t.habits.length} · {t.selectionMode === "single" ? "un seul choix" : "plusieurs"}</small></button>,
+      ...jours.map((x, k) => <span key={t.id + x} className={ferme ? "ox-hgsum" : ""} style={ferme ? { ["--c" as string]: t.color, ["--f" as string]: faitsTheme[k] / (t.selectionMode === "single" ? 1 : t.habits.length) } : undefined} title={ferme ? `${t.name} · ${dateCourte(x)} : ${faitsTheme[k]} / ${t.selectionMode === "single" ? 1 : t.habits.length}` : undefined} />), <span key={t.id + "r"} />);
+    if (ferme) return;
     t.habits.forEach((h) => {
       const col = couleurHabitude(h); let ok = 0, tot = 0;
       cellules.push(<span key={h.id} className="hx-hgl is-sub" data-hp={h.id}><i className="hx-hdot" style={{ background: col }} />{h.name}</span>);
@@ -200,10 +215,10 @@ export function Corps() {
       {(erreurSante || erreurSport) && <p className="ox-alerte">{erreurSante && <>Santé indisponible : {erreurSante}. </>}{erreurSport && <>Sport indisponible : {erreurSport}.</>}</p>}
       <div className="hx-cgrid">{c.cartes.map(carte)}</div>
       <Section id="act" titre="Activité et sport" ouvert={!replie("act")} basculer={() => basculer("act")} resume={`${activites.filter((a) => a.date >= ajouterJours(jour, -6)).length} séances sur 7 jours`}>
-        {activites.length ? <BlocSport activites={activites} c={c} setReg={(r) => majCorps({ regroupementSport: r })} /> : <p className="hx-dim">{charge ? "Aucune activité relayée." : "…"}</p>}
+        {activites.length ? <BlocSport activites={activites} c={c} setReg={(r) => majCorps({ regroupementSport: r })} maj={majCorps} /> : <p className="hx-dim">{charge ? "Aucune activité relayée." : "…"}</p>}
       </Section>
       <Section id="hab" titre="Habitudes" ouvert={!replie("hab")} basculer={() => basculer("hab")} resume={`${eh.faites}/${eh.total} aujourd'hui`}>
-        <GrilleHabitudes n={Math.min(c.periode, 30)} />{c.periode > 30 && <p className="hx-hint">Habitudes limitées aux 30 derniers jours pour rester lisibles.</p>}
+        <GrilleHabitudes n={Math.min(c.periode, 30)} replies={c.replies} basculer={(k) => majCorps({ replies: c.replies.includes(k) ? c.replies.filter((x) => x !== k) : [...c.replies, k] })} />{c.periode > 30 && <p className="hx-hint">Habitudes limitées aux 30 derniers jours pour rester lisibles.</p>}
       </Section>
       {d.objectifsSport.weeklyHours == null && activites.length > 0 && <p className="hx-hint">Aucun objectif hebdomadaire de sport défini dans Nexora : la ligne d'objectif est masquée.</p>}
     </main>
