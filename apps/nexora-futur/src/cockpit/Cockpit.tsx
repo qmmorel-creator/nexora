@@ -38,6 +38,7 @@ import { Guide } from "./Guide";
 import { PageFinancesKdm } from "./Finances";
 import { aCaser, type ModeJour } from "../donnees/journee";
 import { fusionnerPrefs } from "../donnees/prefs";
+import { actionDeTouche, touches } from "../donnees/raccourcis";
 import { archiverPlusieurs, archiverTache, basculer, creer, dupliquerPlusieurs, dupliquerTache, masse, modifier, remettre, restaurerPlusieurs, restaurerTache, retirer, statutCyclique } from "./actions";
 import { decalerDates } from "../donnees/operations";
 import { Frise } from "./Frise";
@@ -54,12 +55,17 @@ const LENTILLES: Record<string, { libelle: string; touche: string }> = {
 };
 const ecrit = (el: EventTarget | null) => el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
-const AIDE: [string, string][] = [
-  ["⌘K · Ctrl+K · /", "Palette : créer, chercher, aller à, commandes"], ["C · N · Ctrl+Alt+N", "Nouvelle tâche (saisie rapide)"],
-  ["J · ↓ / K · ↑", "Tâche suivante / précédente"], ["↵", "Ouvrir la fiche"], ["Échap", "Fermer la fiche ou la palette"],
-  ["g puis j · c · f · s · e", "Espace : Fil du jour, Chantiers, Finances, Corps, Équipe"], ["3", "Page du projet"], ["E", "Terminer / rouvrir"], ["S", "Statut suivant"], ["F", "Focus oui / non"], ["D", "Modifier la date de fin"], ["A", "Changer le responsable"],
-  ["X · Suppr", "Archiver (annulable)"], ["1 · 2 · 4 · 5 · 6 · 7 · 8", "Lentille Liste, Colonnes, Frise, Agenda, Tableur, Densité, Synthèse"], ["?", "Cette aide"],
-];
+// Aide clavier : les lettres réglables suivent Réglages, Raccourcis.
+const aideClavier = (t: Record<string, string>): [string, string][] => {
+  const k = (a: string, ...autres: string[]) => [t[a]?.toUpperCase(), ...autres].filter(Boolean).join(" · ") || "—";
+  return [
+    ["⌘K · Ctrl+K · /", "Palette : créer, chercher, aller à, commandes"], [k("creer", "N", "Ctrl+Alt+N"), "Nouvelle tâche (saisie rapide)"],
+    [`${k("suivante", "↓")} / ${k("precedente", "↑")}`, "Tâche suivante / précédente"], ["↵", "Ouvrir la fiche"], ["Échap", "Fermer la fiche ou la palette"],
+    ["g puis j · c · f · s · e", "Espace : Fil du jour, Chantiers, Finances, Corps, Équipe"], ["3", "Page du projet"], [k("terminer"), "Terminer / rouvrir"], [k("statut"), "Statut suivant"],
+    [k("focus"), "Focus oui / non"], [k("date"), "Modifier la date de fin"], [k("responsable"), "Changer le responsable"],
+    [k("archiver", "Suppr"), "Archiver (annulable)"], ["1 · 2 · 4 · 5 · 6 · 7 · 8", "Lentille Liste, Colonnes, Frise, Agenda, Tableur, Densité, Synthèse"], ["?", "Cette aide (réglable dans Réglages, Raccourcis)"],
+  ];
+};
 
 export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const { d, executer, ecrireJson, enCours, source } = useDonnees();
@@ -72,6 +78,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const paletteRef = useRef<null | "tout" | "creer">(null);
   const setPalette = useCallback((v: null | "tout" | "creer") => { paletteRef.current = v; setPaletteEtat(v); }, []);
   const [aide, setAide] = useState(false);
+  const [texteCreer, setTexteCreer] = useState(""); // Agenda : « + Tâche ce jour » préremplit la date
   const [selection, setSelection] = useState<string | undefined>();
   const zone = useRef<HTMLDivElement>(null);
 
@@ -283,6 +290,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   ], [r, majAdresse, changerApparence, apparence.densite, vue, d]);
 
   // Clavier global.
+  const touchesCockpit = touches(d.prefs.raccourcis);
   useEffect(() => {
     const touche = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -300,19 +308,24 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
       if (e.key === "g") { accord.current = Date.now(); return; }
       const sel = selection && ordre.includes(selection) ? selection : undefined;
       const bouger = (n: number) => { e.preventDefault(); const i = sel ? ordre.indexOf(sel) : -1; const k = Math.max(0, Math.min(ordre.length - 1, i + n)); if (ordre[k]) { setSelection(ordre[k]); if (ouverte) majAdresse({ t: ordre[k] }); } };
+      // Touches fixes, puis lettres réglables (Réglages, Raccourcis).
+      const action = e.key === "N" ? "creer" : e.key === "ArrowDown" ? "suivante" : e.key === "ArrowUp" ? "precedente" : e.key === "Delete" ? "archiver" : actionDeTouche(touchesCockpit, e.key);
+      switch (action) {
+        case "creer": e.preventDefault(); setPalette("creer"); return;
+        case "suivante": bouger(1); return;
+        case "precedente": bouger(-1); return;
+        case "terminer": if (sel) actionBasculer(sel); return;
+        case "statut": if (sel) { const t = tache(sel); if (t) agir(statutCyclique(sel), "Statut changé.", () => remettre([t])); } return;
+        case "focus": if (sel) { const t = tache(sel); if (t) actionPatch(sel, { focus: t.focus !== true }, t.focus ? "Focus retiré." : "Tâche passée en focus."); } return;
+        case "date": if (sel) focusChamp(sel, "i-fin"); return;
+        case "responsable": if (sel) focusChamp(sel, "i-resp"); return;
+        case "archiver": if (sel) actionArchiver(sel); return;
+      }
       switch (e.key) {
         case "/": e.preventDefault(); setPalette("tout"); break;
-        case "c": case "n": case "N": e.preventDefault(); setPalette("creer"); break;
-        case "j": case "ArrowDown": bouger(1); break;
-        case "k": case "ArrowUp": bouger(-1); break;
+        case "n": e.preventDefault(); setPalette("creer"); break;
         case "Enter": if (sel) { e.preventDefault(); ouvrir(sel); } break;
         case "Escape": if (ouverte) fermer(); else setSelection(undefined); break;
-        case "e": if (sel) actionBasculer(sel); break;
-        case "s": if (sel) { const t = tache(sel); if (t) agir(statutCyclique(sel), "Statut changé.", () => remettre([t])); } break;
-        case "f": if (sel) { const t = tache(sel); if (t) actionPatch(sel, { focus: t.focus !== true }, t.focus ? "Focus retiré." : "Tâche passée en focus."); } break;
-        case "d": if (sel) focusChamp(sel, "i-fin"); break;
-        case "a": if (sel) focusChamp(sel, "i-resp"); break;
-        case "x": case "Delete": if (sel) actionArchiver(sel); break;
         case "1": if (sansRequete) naviguer("/taches"); else majAdresse({ v: "liste" }); break;
         case "2": if (sansRequete) naviguer("/taches", new URLSearchParams("v=colonnes")); else majAdresse({ v: "colonnes" }); break;
         case "3": if (vue === "projet") majAdresse({ v: "page" }); break;
@@ -382,7 +395,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
           ) : lentille === "frise"
             ? <Frise paquets={paquets} cat={d} aujourdhui={d.aujourdhui} selection={selection} references={d.references} prefs={prefsFrise} setPrefs={setPrefsFrise} onSelect={setSelection} onOuvrir={ouvrir} onDeplacer={(id, patch) => actionPatch(id, patch, "Dates modifiées.")} />
           : lentille === "agenda"
-            ? <Agenda taches={visiblesToutes} cat={d} aujourdhui={d.aujourdhui} selection={selection} onSelect={setSelection} onOuvrir={ouvrir} />
+            ? <Agenda taches={visiblesToutes} cat={d} aujourdhui={d.aujourdhui} selection={selection} onSelect={setSelection} onOuvrir={ouvrir} onCreerLe={(iso) => { setTexteCreer(`${iso} `); setPalette("creer"); }} />
           : lentille === "tableur"
             ? <Tableur paquets={paquets} cat={d} aujourdhui={d.aujourdhui} references={d.references} selection={selection} colonnes={prefsTableur?.colonnes ?? COLONNES_DEFAUT} setColonnes={(c) => setPrefsTableur({ colonnes: c })}
                 onSelect={setSelection} onOuvrir={ouvrir} onPatch={(id, patch) => actionPatch(id, patch)} onMasse={actionMasse} onDecaler={(ids, n) => actionMasse(ids, decalerDates(n), `Décalage de ${n > 0 ? "+" : ""}${n} j appliqué`)}
@@ -408,13 +421,13 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         <span className="marge-auto"><Kbd>⌘K</Kbd> commandes · <Kbd>?</Kbd> raccourcis</span>
       </footer>
       {guide && <Guide onFermer={fermerGuide} />}
-      {palette && <Palette key={palette} ouverte modeInitial={palette} onFermer={() => setPalette(null)} cat={d} taches={d.taches} archive={d.archive} aujourdhui={d.aujourdhui} commandes={commandes}
+      {palette && <Palette key={`${palette}${texteCreer}`} ouverte modeInitial={palette} texteInitial={palette === "creer" ? texteCreer : ""} onFermer={() => { setPalette(null); setTexteCreer(""); }} cat={d} taches={d.taches} archive={d.archive} aujourdhui={d.aujourdhui} commandes={commandes}
         onCreer={actionCreer} onOuvrirTache={(t, archivee) => (archivee ? naviguer("/archive") : ouvrir(t.id))} onAllerProjet={(id) => naviguer(`/projets/${encodeURIComponent(id)}`)} />}
       {aide && (
         <div className="voile" onMouseDown={(e) => e.target === e.currentTarget && setAide(false)}>
           <div className="palette aide" role="dialog" aria-modal="true" aria-label="Raccourcis clavier">
             <Cartouche surtitre="Cockpit" titre="Raccourcis clavier" actions={<Bouton variante="discret" onClick={() => setAide(false)}>Fermer <Kbd>Échap</Kbd></Bouton>} />
-            <dl className="aide-liste">{AIDE.map(([k, v]) => <div key={k}><dt className="mono">{k}</dt><dd>{v}</dd></div>)}</dl>
+            <dl className="aide-liste">{aideClavier(touchesCockpit).map(([k, v]) => <div key={k}><dt className="mono">{k}</dt><dd>{v}</dd></div>)}</dl>
           </div>
         </div>
       )}

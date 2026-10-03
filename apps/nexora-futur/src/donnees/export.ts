@@ -16,3 +16,9 @@ export function sauvegarde(lectures: Record<string, { cle: string; texte: string
   Object.values(lectures).forEach((l) => { if (!l) return; let v: unknown = l.texte; try { v = JSON.parse(l.texte); } catch { /* texte brut */ } cles[l.cle] = { revision: l.revision ?? null, valeur: v }; });
   return JSON.stringify({ format: "nexora-futur-sauvegarde", version: 1, le, cles }, null, 2);
 }
+
+// Séances de sport (sportCsv de nexora-project) : durées en minutes.
+export function sportCsv(rows: { date: string; sport: string; title?: string; total: number | null; moving: number | null; distance: number | null; elevation: number | null; hr: number | null; url: string | null }[]): string {
+  const entete = ["date", "sport", "titre", "durée (min)", "en mouvement (min)", "distance (km)", "dénivelé (m)", "FC moyenne", "lien"];
+  return "\ufeff" + [entete, ...rows.map((r) => [r.date, r.sport, r.title, r.total, r.moving, r.distance, r.elevation, r.hr, r.url])].map((l) => l.map(cellule).join(";")).join("\r\n");
+}

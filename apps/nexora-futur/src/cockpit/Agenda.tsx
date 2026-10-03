@@ -7,7 +7,7 @@ import { colonnesHoraires, journeeAgenda, libelleMinutes, lundiDe, minutesDe, se
 import { heureParis } from "../donnees/journee";
 import { Bouton, Surtitre } from "../composants";
 
-interface Props { taches: Tache[]; cat: Catalogues; aujourdhui: string; selection?: string; onSelect: (id: string) => void; onOuvrir: (id: string) => void; }
+interface Props { taches: Tache[]; cat: Catalogues; aujourdhui: string; selection?: string; onSelect: (id: string) => void; onOuvrir: (id: string) => void; onCreerLe?: (iso: string) => void; }
 
 const JOURS = ["Lun.", "Mar.", "Mer.", "Jeu.", "Ven.", "Sam.", "Dim."];
 const MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
@@ -16,7 +16,7 @@ const HAUTEUR_HEURE = 44;
 const dateLongue = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 const duree = (m: number) => { const h = Math.floor(m / 60); const r = m % 60; return h ? `${h} h${r ? ` ${String(r).padStart(2, "0")}` : ""}` : `${r} min`; };
 
-export function Agenda({ taches, cat, aujourdhui, selection, onSelect, onOuvrir }: Props) {
+export function Agenda({ taches, cat, aujourdhui, selection, onSelect, onOuvrir, onCreerLe }: Props) {
   const [debut, setDebut] = useState(() => ajouterJours(lundiDe(aujourdhui), -7));
   const [semaines, setSemaines] = useState(10);
   const [jour, setJour] = useState(aujourdhui);
@@ -76,6 +76,7 @@ export function Agenda({ taches, cat, aujourdhui, selection, onSelect, onOuvrir 
           <Bouton variante="discret" aria-label="Jour précédent" onClick={() => setJour(ajouterJours(jour, -1))}>←</Bouton>
           <div><Surtitre>{jour === aujourdhui ? "Aujourd'hui" : "Journée"}</Surtitre><strong className="ag-date">{dateLongue(jour)}</strong></div>
           <Bouton variante="discret" aria-label="Jour suivant" onClick={() => setJour(ajouterJours(jour, 1))}>→</Bouton>
+          {onCreerLe && <Bouton className="ag-creer" onClick={() => onCreerLe(jour)} aria-label={`Nouvelle tâche le ${dateLongue(jour)}`}>+ Tâche ce jour</Bouton>}
         </div>
         <p className="mono discret">{j.total} tâche(s) · {j.finies} terminée(s) · {duree(j.minutesPlanifiees)} planifiées</p>
         {j.journee.length > 0 && <div className="ag-journee"><Surtitre>Sur la journée</Surtitre>{j.journee.map(({ t, fini }) => <div key={t.id} className={fini ? "finie" : ""}>{element(t)}</div>)}</div>}
