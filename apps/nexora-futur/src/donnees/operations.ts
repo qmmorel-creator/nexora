@@ -151,3 +151,17 @@ export function dupliquer(taches: Tache[], id: string, cat: Catalogues): { tache
   delete c.completedAt; delete c.lastInteraction;
   return { taches: [...taches, c], tache: c };
 }
+
+// Tableur (Ref #658) : édition en masse, port de TableView (part-003:1624).
+// Chaque tâche passe par modifierTache (statut imposé, jalon, dépendances) ;
+// une tâche refusée (Google Calendar) est comptée, pas modifiée.
+export function modifierPlusieurs(taches: Tache[], ids: string[], patch: (t: Tache) => Partial<Tache> | null, cat: Catalogues): { taches: Tache[]; modifiees: number; refusees: number } {
+  let r = taches; let modifiees = 0; let refusees = 0;
+  for (const id of ids) {
+    const t = r.find((x) => x.id === id); if (!t) continue;
+    const p = patch(t); if (!p) continue;
+    try { r = modifierTache(r, id, p, cat); modifiees++; } catch (e) { if (e instanceof RefusOperation) refusees++; else throw e; }
+  }
+  return { taches: r, modifiees, refusees };
+}
+export const decalerDates = (n: number) => (t: Tache): Partial<Tache> | null => (!n || (!t.start && !t.end) ? null : { ...(t.start ? { start: ajouterJours(t.start, n) } : {}), ...(t.end ? { end: ajouterJours(t.end, n) } : {}) });

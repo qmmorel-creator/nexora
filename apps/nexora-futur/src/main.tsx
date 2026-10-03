@@ -7,6 +7,7 @@ import { App } from "./App";
 import "./style.css";
 import "./cockpit/cockpit.css";
 import "./cockpit/fil.css";
+import "./cockpit/vues.css";
 
 // Jetons et préférences appliqués avant le premier rendu (pas de flash de thème).
 const style = document.createElement("style");
