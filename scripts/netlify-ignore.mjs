@@ -27,12 +27,20 @@ export function decider({ contexte, arret, messageCommit = "", diffVide }) {
   return { construire: false, raison: `contexte « ${contexte || "inconnu"} » : aucun build Git` };
 }
 
+// Comparaison utilisable seulement entre deux commits DIFFÉRENTS. Au premier
+// build d'un site (aucun build antérieur), Netlify fournit CACHED_COMMIT_REF
+// égal à COMMIT_REF : le diff serait vide et le site jamais construit (#688).
+// Diff inconnu = repli « construire ».
+export function refsComparables(precedent, courant) {
+  return !!precedent && !!courant && precedent !== courant;
+}
+
 const principal = process.argv[1] && import.meta.filename && process.argv[1].endsWith("netlify-ignore.mjs");
 if (principal) {
   const env = process.env;
   const git = (args) => { try { return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; } };
   let diffVide = null;
-  if (env.CACHED_COMMIT_REF && env.COMMIT_REF) {
+  if (refsComparables(env.CACHED_COMMIT_REF, env.COMMIT_REF)) {
     const racine = git(["rev-parse", "--show-toplevel"]);
     // « . » = base directory du site ; les fichiers partagés en plus.
     const r = git(["diff", "--name-only", env.CACHED_COMMIT_REF, env.COMMIT_REF, "--", ".", ...PARTAGES.map((p) => `${racine}/${p}`)]);

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { decider, ARRET } from "../scripts/netlify-ignore.mjs";
+import { decider, refsComparables, ARRET } from "../scripts/netlify-ignore.mjs";
 import { classer, empreinteSocle } from "../scripts/ci-perimetre.mjs";
 import { resoudre, creerServeur } from "../scripts/serveur-local.mjs";
 import { fumer } from "../scripts/smoke-environnement.mjs";
@@ -25,8 +25,16 @@ test("ignore Netlify : production construite à chaque fusion, jamais de preview
   assert.equal(decider({ contexte: undefined }).construire, false);
 });
 
-test("netlify.toml : les deux sites passent par la commande ignore commune", () => {
-  for (const f of ["apps/nexora/netlify.toml", "apps/nexora-mcp/netlify.toml"]) {
+test("ignore Netlify : premier build d'un site (CACHED_COMMIT_REF = COMMIT_REF) → diff inconnu, donc construction (#688)", () => {
+  assert.equal(refsComparables("abc", "abc"), false, "même commit : pas de comparaison possible");
+  assert.equal(refsComparables("", "abc"), false);
+  assert.equal(refsComparables(undefined, "abc"), false);
+  assert.equal(refsComparables("abc", "def"), true);
+  assert.equal(decider({ contexte: "production", diffVide: null }).construire, true);
+});
+
+test("netlify.toml : tous les sites passent par la commande ignore commune", () => {
+  for (const f of ["apps/nexora/netlify.toml", "apps/nexora-mcp/netlify.toml", "apps/nexora-futur/netlify.toml", "apps/nexora-future-optim/netlify.toml"]) {
     const toml = readFileSync(path.join(REPO, f), "utf8");
     assert.match(toml, /ignore = "node \.\.\/\.\.\/scripts\/netlify-ignore\.mjs"/, f);
     assert.doesNotMatch(toml, /git diff --quiet/, `${f} : l'ancienne règle par dossier ne doit plus décider seule`);
