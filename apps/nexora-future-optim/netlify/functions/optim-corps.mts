@@ -21,8 +21,12 @@ export default async (req: Request) => {
   if (!uid || !Netlify.env.get("FIREBASE_SERVICE_ACCOUNT_JSON")) return json({ ok: false, error: "configuration_missing" }, 503);
   const jeton = (req.headers.get("authorization") || "").replace(/^Bearer\s+/, "").trim();
   if (!jeton) return json({ ok: false, error: "unauthorized" }, 401);
+  // Compte de service illisible (valeur masquée « •••• » recopiée, JSON
+  // tronqué) : erreur de configuration, pas une session expirée.
+  let auth;
+  try { auth = getAuth(app()); } catch { return json({ ok: false, error: "configuration_invalid" }, 503); }
   try {
-    const decode = await getAuth(app()).verifyIdToken(jeton);
+    const decode = await auth.verifyIdToken(jeton);
     if (decode.uid !== uid) return json({ ok: false, error: "unauthorized" }, 401);
   } catch { return json({ ok: false, error: "unauthorized" }, 401); }
 

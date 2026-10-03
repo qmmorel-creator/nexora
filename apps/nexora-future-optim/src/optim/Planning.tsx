@@ -53,7 +53,7 @@ function portees(ts: Tache[], par: GroupePlanning, o: ReturnType<typeof useOptim
   if (par === "statut") return d.statuts.map((s) => ({ id: s.id, libelle: s.name || s.id, couleur: statut(s.id).color, taches: ts.filter((t) => t.statusId === s.id) }));
   return [...d.projets.map((p) => ({ id: p.id, libelle: p.name || p.id, couleur: p.color || "#94a3b8", projet: p.id, taches: ts.filter((t) => t.projectId === p.id) })), { id: "__sans", libelle: "Sans projet", couleur: "#94a3b8", taches: ts.filter((t) => !t.projectId || !d.projets.some((p) => p.id === t.projectId)) }];
 }
-const LIBELLE_GROUPE: Record<GroupePlanning, string> = { projet: "Projet", dossier: "Dossier", responsable: "Responsable", statut: "Statut" };
+export const LIBELLE_GROUPE: Record<GroupePlanning, string> = { projet: "Projet", dossier: "Dossier", responsable: "Responsable", statut: "Statut" };
 
 export function Planning({ email, allerJournee, ouvrirProjet }: { email: string; allerJournee: () => void; ouvrirProjet: (id: string) => void }) {
   const o = useOptim();

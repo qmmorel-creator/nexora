@@ -1,6 +1,6 @@
 // Accueil (Ref #688) : Mosaïque condensée — Journée (Cadran agrandi,
 // Aujourd'hui, À rattraper), Corps, Semaine, Projets, bandeau Argent.
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { ajouterJours, type Tache } from "../donnees/modele";
 import { lignesFrise } from "../donnees/planning";
 import { santeProjet } from "../donnees/projet";
@@ -8,7 +8,7 @@ import type { SyntheseBudget } from "../donnees/finance";
 import { dateCourte, hm, jourCourt, jourLong, majuscule, useOptim, useUi } from "./contexte";
 import { formaterSante, mesureSante, MESURES_SANTE } from "../donnees/sante";
 import { resumeMetrique } from "../donnees/corps";
-import { MAX_MESURES_CARTE } from "../donnees/prefs";
+import { LARGEURS_ACCUEIL, LARGEURS_ACCUEIL_MOYEN, MAX_MESURES_CARTE, placerTuiles, type TuileAccueil } from "../donnees/prefs";
 import { styleMesure, useCorps } from "./corps-donnees";
 import { Grille, graduations, HAUTEUR_RANGEE, infobulle, LigneGantt, ranger, tx, type Plage } from "./frise";
 import { Cadran, Coche, heureParisDec, hmf, PixelHabitudes, useElementsHoraires, useJour } from "./jour";
@@ -111,6 +111,7 @@ function TuileCorps({ aller }: { aller: (ecran: string) => void }) {
 
 export function Accueil({ aller }: { aller: (ecran: string, projet?: string) => void }) {
   const { d, jour, prefs, fini, retard } = useOptim();
+  const { setReglages } = useUi();
   const { tachesDuJour, compteTaches, etats } = useJour();
   const horaires = useElementsHoraires()(jour);
   const maintenant = heureParisDec();
@@ -121,19 +122,27 @@ export function Accueil({ aller }: { aller: (ecran: string, projet?: string) => 
   return (
     <main className="hx-main hx-home" data-scroll>
       <div className="hx-hello is-tight"><h1>{majuscule(jourLong(jour))}</h1><p>{(() => { const n = aujourdhui.filter((t) => !fini(t)).length; return `${n} tâche${n > 1 ? "s" : ""} aujourd'hui`; })()} · <span className="hx-red">{enRetard.length} en retard</span> · {suivant ? <>ensuite <b>{hmf(suivant.h0)} {suivant.titre}</b></> : "plus rien d'horodaté"} · habitudes {eh.faites}/{eh.total}</p></div>
-      <div className="hx-grid">
+      {(() => {
+        const tuiles: Record<TuileAccueil, ReactNode> = {
+          journee: <>
         <section className="hx-tile hx-t-day"><header className="hx-th"><h2>Journée <small>{ct.faites}/{ct.total} tâches · habitudes {eh.faites}/{eh.total}</small></h2><button type="button" className="hx-more" onClick={() => aller("journee")}>Ouvrir ›</button></header>
           <div className="hx-dayin"><div className="hx-mini"><Cadran date={jour} taille={240} mini pixels={prefs.accueil.pixels} /></div>
             <div className="hx-daycols">
               <div><h3 className="hx-h3">Aujourd'hui <small>{aujourdhui.length}</small></h3><ul className="hx-list">{aujourdhui.slice(0, 8).map((t) => <LigneTache key={t.id} t={t} />)}</ul>{aujourdhui.length > 8 && <button type="button" className="hx-more" onClick={() => aller("journee")}>+ {aujourdhui.length - 8} autres</button>}{!aujourdhui.length && <p className="hx-dim">Rien d'échu aujourd'hui.</p>}</div>
               <div><h3 className="hx-h3">À rattraper <span className="hx-red">{enRetard.length}</span><button type="button" className="hx-more" onClick={() => aller("planning")}>Planning ›</button></h3><ul className="hx-list">{enRetard.slice(0, 8).map((t) => <LigneTache key={t.id} t={t} sansProjet />)}</ul>{enRetard.length > 8 && <button type="button" className="hx-more" onClick={() => aller("planning")}>+ {enRetard.length - 8} autres</button>}</div>
-            </div></div></section>
-        <TuileCorps aller={aller} />
-        <Semaine ouvrirPlanning={() => aller("planning")} />
+            </div></div></section></>,
+          corps: <TuileCorps aller={aller} />,
+          semaine: <Semaine ouvrirPlanning={() => aller("planning")} />,
+          projets: <>
         <section className="hx-tile hx-t-proj"><header className="hx-th"><h2>Projets</h2><button type="button" className="hx-more" onClick={() => aller("projets")}>Ouvrir ›</button></header>
-          <ul className="hx-plmini">{d.projets.map((p) => { const s = santeProjet(d.taches, p.id, d, jour); return s.total ? <li key={p.id}><button type="button" onClick={() => aller("projets", p.id)}><i style={{ background: p.color || "#94a3b8" }} />{p.name}</button><span className="hx-bar"><i style={{ width: `${s.avancement}%`, background: p.color || "#94a3b8" }} /></span><span className="hx-num">{s.avancement} %</span><span className={`hx-num ${s.retards ? "hx-red" : "hx-dim"}`}>{s.retards ? `${s.retards} ret.` : "—"}</span></li> : null; })}</ul></section>
-        <BandeauArgent ouvrir={() => aller("argent")} />
-      </div>
+          <ul className="hx-plmini">{d.projets.map((p) => { const s = santeProjet(d.taches, p.id, d, jour); return s.total ? <li key={p.id}><button type="button" onClick={() => aller("projets", p.id)}><i style={{ background: p.color || "#94a3b8" }} />{p.name}</button><span className="hx-bar"><i style={{ width: `${s.avancement}%`, background: p.color || "#94a3b8" }} /></span><span className="hx-num">{s.avancement} %</span><span className={`hx-num ${s.retards ? "hx-red" : "hx-dim"}`}>{s.retards ? `${s.retards} ret.` : "—"}</span></li> : null; })}</ul></section></>,
+          argent: <BandeauArgent ouvrir={() => aller("argent")} />,
+        };
+        // Tuiles et ordre choisis dans les réglages (#691), rangées toujours pleines.
+        const liste = prefs.accueil.tuiles, w = placerTuiles(liste, LARGEURS_ACCUEIL), wm = placerTuiles(liste, LARGEURS_ACCUEIL_MOYEN);
+        if (!liste.length) return <p className="hx-dim">Aucune tuile affichée. <button type="button" className="hx-more" onClick={() => setReglages("accueil")}>Choisir les tuiles ›</button></p>;
+        return <div className="hx-grid ox-grid">{liste.map((t, k) => <div key={t} className="ox-cell" data-tuile={t} style={{ "--w": w[k], "--wm": wm[k] } as CSSProperties}>{tuiles[t]}</div>)}</div>;
+      })()}
     </main>
   );
 }

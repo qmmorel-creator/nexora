@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CARTES_DEFAUT, fusionnerPrefs, normaliserCorps, normaliserPrefs, PREFS_VIDES } from "../src/donnees/prefs";
+import { CARTES_DEFAUT, fusionnerPrefs, LARGEURS_ACCUEIL, LARGEURS_ACCUEIL_MOYEN, normaliserCorps, normaliserPrefs, placerTuiles, PREFS_VIDES, TUILES_ACCUEIL } from "../src/donnees/prefs";
 
 describe("préférences nexora:optimPrefs (#687)", () => {
   it("valeur absente ou invalide : valeurs par défaut", () => {
@@ -12,6 +12,19 @@ describe("préférences nexora:optimPrefs (#687)", () => {
     expect(normaliserPrefs({ argent: { onglet: "bourse", patrimoineMois: 7 } }).argent).toEqual({ onglet: "mois", patrimoineMois: 24 });
     expect(normaliserPrefs({ argent: "x" }).argent).toEqual({ onglet: "mois", patrimoineMois: 24 });
   });
+  it("accueil (#691) : tuiles connues, sans doublon, ordre conservé ; absent = toutes", () => {
+    expect(normaliserPrefs({}).accueil.tuiles).toEqual([...TUILES_ACCUEIL]);
+    expect(normaliserPrefs({ accueil: { tuiles: ["argent", "meteo", "journee", "argent"] } }).accueil.tuiles).toEqual(["argent", "journee"]);
+    expect(normaliserPrefs({ accueil: { tuiles: [] } }).accueil.tuiles).toEqual([]);
+  });
+  it("grille de l'accueil : rangées de 12 colonnes toujours pleines", () => {
+    expect(placerTuiles([...TUILES_ACCUEIL], LARGEURS_ACCUEIL)).toEqual([8, 4, 8, 4, 12]);
+    expect(placerTuiles(["journee", "semaine", "projets"], LARGEURS_ACCUEIL)).toEqual([12, 8, 4]);
+    expect(placerTuiles(["corps", "argent", "projets"], LARGEURS_ACCUEIL)).toEqual([12, 12, 12]);
+    expect(placerTuiles(["projets", "corps", "journee"], LARGEURS_ACCUEIL)).toEqual([4, 8, 12]);
+    expect(placerTuiles([...TUILES_ACCUEIL], LARGEURS_ACCUEIL_MOYEN)).toEqual([12, 12, 8, 4, 12]);
+    expect(placerTuiles([], LARGEURS_ACCUEIL)).toEqual([]);
+  });
   it("couleurs d'habitudes : hexadécimal à 6 chiffres seulement", () => {
     expect(normaliserPrefs({ couleursHabitudes: { h1: "#DC2626", h2: "red", h3: "#123" } }).couleursHabitudes).toEqual({ h1: "#dc2626" });
   });
@@ -23,7 +36,7 @@ describe("préférences nexora:optimPrefs (#687)", () => {
     expect(p.vues).toEqual([{ id: "v1", ecran: "planning", nom: "Retards", filtre: { q: "", projets: ["p1"], statuts: [], responsables: [], types: [], criticites: [], retard: true, jalons: false, terminees: false }, zoom: "trimestre", style: "ecart" }]);
   });
   it("fusion : conserve les champs inconnus d'une version future", () => {
-    const r = fusionnerPrefs({ futur: 1, gantt: "pont" }, { accueil: { pixels: false, corps: ["hrv"] } });
+    const r = fusionnerPrefs({ futur: 1, gantt: "pont" }, { accueil: { pixels: false, corps: ["hrv"], tuiles: ["corps"] } });
     expect(r).toMatchObject({ futur: 1, gantt: "pont", accueil: { pixels: false }, version: 1 });
   });
   it("Corps : toujours quatre cartes, titres et mesures (4 au plus) conservés", () => {
