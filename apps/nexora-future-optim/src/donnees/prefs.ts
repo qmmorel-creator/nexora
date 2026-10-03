@@ -37,7 +37,10 @@ export const CARTES_DEFAUT: CarteCorps[] = [
 export const TUILES_ACCUEIL = ["journee", "corps", "semaine", "projets", "argent"] as const;
 export type TuileAccueil = (typeof TUILES_ACCUEIL)[number];
 export const TUILE_CORPS_DEFAUT = ["recovery", "sleepHours", "hrv", "sport"];
-export interface PrefsCorps { periode: PeriodeCorps; regroupement: RegroupementCorps; regroupementSport: RegroupementCorps; cartes: CarteCorps[]; replies: string[]; }
+// Sport (retour du 03/10/2026) : sports masqués et grandeur affichée.
+export const GRANDEURS_SPORT = ["duree", "distance", "denivele"] as const;
+export type GrandeurSport = (typeof GRANDEURS_SPORT)[number];
+export interface PrefsCorps { periode: PeriodeCorps; regroupement: RegroupementCorps; regroupementSport: RegroupementCorps; cartes: CarteCorps[]; replies: string[]; sportsMasques: string[]; grandeurSport: GrandeurSport; }
 
 // Argent (#690) : onglet ouvert et durée N de l'évolution du patrimoine.
 export const ONGLETS_ARGENT = ["mois", "patrimoine", "pro", "operations"] as const;
@@ -65,7 +68,7 @@ export const PREFS_VIDES: PrefsOptim = {
   planning: { zoom: "mois", groupe: "projet", corps: true, argent: false },
   projets: { zoom: "trimestre", groupe: "aucun", reference: "courante" },
   couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT, tuiles: [...TUILES_ACCUEIL] },
-  corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [] },
+  corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [], sportsMasques: [], grandeurSport: "duree" },
   argent: { onglet: "mois", patrimoineMois: 24, periode: "mois" },
   vues: [],
 };
@@ -113,7 +116,7 @@ export function normaliserCorps(v: unknown): PrefsCorps {
     return { id: d.id, titre, mesures: Array.isArray(c.mesures) ? mesuresValides(c.mesures) : d.mesures };
   });
   const periode = (PERIODES_CORPS as readonly number[]).includes(b.periode as number) ? (b.periode as PeriodeCorps) : 30;
-  return { periode, regroupement: parmi(b.regroupement, REGROUPEMENTS, "jour"), regroupementSport: parmi(b.regroupementSport, REGROUPEMENTS, "semaine"), cartes, replies: chaines(b.replies, 20) };
+  return { periode, regroupement: parmi(b.regroupement, REGROUPEMENTS, "jour"), regroupementSport: parmi(b.regroupementSport, REGROUPEMENTS, "semaine"), cartes, replies: chaines(b.replies, 60), sportsMasques: chaines(b.sportsMasques, 40).map((x) => x.slice(0, 60)), grandeurSport: parmi(b.grandeurSport, GRANDEURS_SPORT, "duree") };
 }
 
 export function normaliserPrefs(v: unknown): PrefsOptim {
