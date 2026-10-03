@@ -121,7 +121,7 @@ test("passage complet : rapproche la saisie, crée le reste, rien au second pass
   assert.equal(first.accounts.length, 1, "compte ignoré non synchronisé");
   const [account] = first.accounts;
   assert.equal(account.dateFrom, "2026-09-25");
-  assert.deepEqual(account.skipped, { pending: 1, beforeImportFrom: 1, otherCurrency: 0, ignored: 0, invalid: 0, statuses: { PDNG: 1 } });
+  assert.deepEqual(account.skipped, { pending: 1, beforeImportFrom: 1, otherCurrency: 0, ignored: 0, invalid: 0, statuses: { PDNG: 1 }, upcomingUndated: 0 });
   assert.equal(account.samples.pending[0].label, "En attente");
   assert.deepEqual(account.balance, { amount: 1500, currency: "EUR", type: "CLBD", date: "2026-10-03" });
   assert.equal(writes.imports[0].p_operation, "import");
@@ -153,6 +153,24 @@ test("écritures plafonnées : passage partiel repris sans doublon, date de sync
   assert.deepEqual([r3.partial, r3.created, r3.accounts[0].remaining], [false, 1, 0]);
   assert.equal(writes.linkPatches.length, 1);
   assert.equal(ledger.length, 3, "1 saisie rapprochée + 2 créations, aucun doublon");
+});
+
+test("opération à venir : créée à sa date future sans rapprochement, rapprochée à la comptabilisation", async () => {
+  const ledger = [];
+  const links = [{ account_key: "hash:H1", aspsp_key: "FR:ce", account_uid: "uid-1", label: "Courant", account_id: "courant_ce", import_from: "2026-09-28", last_synced_at: null }];
+  const connections = [{ aspsp_key: "FR:ce", aspsp_name: "CE", session_id: "s", valid_until: "2027-03-31T00:00:00Z" }];
+  const bank = { "uid-1": [{ ...tx("S2", "45.00", null, "Free Mobile"), status: "OTHR", value_date: "2026-10-08" }] };
+  const writes = fakeNetwork({ ledger, links, connections, bank });
+  const r1 = await S.runSync(config, finance, { now: new Date("2026-10-03T08:00:00Z") });
+  assert.deepEqual([r1.created, r1.reconciled], [1, 0]);
+  assert.equal(writes.imports[0].p_transaction.bank_date, "2026-10-08");
+  assert.equal(writes.reconciliations.length, 0, "pas de rapprochement avant le passage en banque");
+  bank["uid-1"] = [tx("B9", "45.00", "2026-10-09", "Free Mobile")];
+  links[0].last_synced_at = null;
+  const r2 = await S.runSync(config, finance, { now: new Date("2026-10-09T08:00:00Z") });
+  assert.deepEqual([r2.created, r2.reconciled], [0, 1]);
+  assert.equal(ledger.length, 1, "aucun doublon");
+  assert.equal(ledger[0].reconciled, true);
 });
 
 test("erreurs par compte : consentement expiré, banque déconnectée", async () => {

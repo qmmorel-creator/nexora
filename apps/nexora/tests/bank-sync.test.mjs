@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
-  accountKeyOf, aspspKeyOf, bankReportSection, buildImportedTransaction, isIgnoredLabel, normalizeIgnorePatterns, consentStatus, describeSessionAccounts, findMerchantRule,
+  accountKeyOf, aspspKeyOf, bankReportSection, buildImportedTransaction, isIgnoredLabel, normalizeIgnorePatterns, normalizeUpcomingTransaction, consentStatus, describeSessionAccounts, findMerchantRule,
   maskIban, normalizeBankTransaction, pickBalance, planAccountSync, syncDateFrom, withExternalIds, UNCLASSIFIED
 } from "../lib/bank-sync.mjs";
 
@@ -188,6 +188,56 @@ test("libellés ignorés : débit mensuel de la carte différée écarté, diagn
   assert.deepEqual(plan.samples.pending.map((s) => s.label), ["CB Carrefour", "CB Sncf"]);
   assert.equal(plan.samples.pending[0].amount, -12.5);
   assert.deepEqual(plan.samples.ignored, [{ date: "2026-11-04", amount: -1460.2, label: "FACTURE CARTE A DEBIT DIFFERE" }]);
+});
+
+test("opérations à venir : créées à leur date future, reconnues si déjà saisies, rapprochées à la comptabilisation", () => {
+  const today = "2026-10-03";
+  const schd = (over) => bankTx({ status: "OTHR", booking_date: null, value_date: null, transaction_date: null, creditor: { name: "Prlv" }, remittance_information: [], ...over });
+  // Paiement carte non comptabilisé, daté du passé : jamais « à venir ».
+  assert.equal(normalizeUpcomingTransaction(bankTx({ status: "OTHR", booking_date: "2026-10-01", creditor: { name: "INTERMARCHE 864231******7" } }), today), null);
+  assert.equal(normalizeUpcomingTransaction(bankTx({ status: "OTHR", booking_date: "2026-10-10", creditor: { name: "AMAZON 864231******7" } }), today), null, "carte, même datée dans le futur");
+  assert.equal(normalizeUpcomingTransaction(bankTx({ status: "PDNG", booking_date: today }), today), null, "en attente du jour : pas à venir");
+  assert.equal(normalizeUpcomingTransaction(bankTx(), today), null, "comptabilisée");
+  assert.equal(normalizeUpcomingTransaction(schd({ booking_date: "2026-10-05" }), today).bankDate, "2026-10-05");
+  assert.equal(normalizeUpcomingTransaction(schd({}), today).bankDate, null);
+
+  const existing = [
+    { transaction_id: "bpce", account_id: "courant_ce", signed_amount: -80, bank_date: "2026-10-05", effective_date: "2026-10-05", transaction_type: "Dépense", reconciled: false },
+    { transaction_id: "consv", account_id: "courant_ce", signed_amount: -60, bank_date: "2026-10-05", effective_date: "2026-10-05", transaction_type: "Dépense", reconciled: false },
+    { transaction_id: "budget", account_id: "courant_ce", signed_amount: -89, bank_date: "2026-10-10", transaction_type: "Budget" },
+  ];
+  const input = {
+    accountKey: "k", accountId: "courant_ce", importFrom: "2026-09-28", rules, today,
+    bankTransactions: [
+      schd({ entry_reference: "S1", booking_date: "2026-10-05", transaction_amount: { amount: "80" }, creditor: { name: "BPCE Vie" } }),
+      schd({ entry_reference: "S2", value_date: "2026-10-08", transaction_amount: { amount: "45" }, creditor: { name: "Free Mobile" } }),
+      schd({ transaction_amount: { amount: "60" }, creditor: { name: "Le Conservateur" } }),
+      schd({ transaction_amount: { amount: "89" }, creditor: { name: "GLC" } }),
+      bankTx({ entry_reference: "C1", status: "OTHR", booking_date: "2026-10-02", creditor: { name: "STATION AVIA 864231******7" } }),
+    ],
+  };
+  const plan = planAccountSync({ ...input, existing });
+  assert.equal(plan.upcomingKnown, 2, "BPCE (datée) et Conservateur (sans date) déjà saisis");
+  assert.equal(plan.create.length, 1);
+  const created = plan.create[0];
+  assert.deepEqual([created.transaction.bank_date, created.transaction.signed_amount, created.reconciliationId, created.upcoming], ["2026-10-08", -45, null, true], "créée à sa date future, non rapprochée");
+  assert.equal(plan.skipped.upcomingUndated, 1, "GLC sans date ni saisie (ligne Budget exclue) : listée");
+  assert.equal(plan.samples.upcomingUndated[0].label, "GLC");
+  assert.deepEqual(plan.samples.upcomingUndated[0].dates, { booking: null, value: null, transaction: null });
+  assert.equal(plan.skipped.pending, 1, "paiement carte toujours écarté");
+  assert.equal(plan.reconcile.length, 0, "rien n'est rapproché avant le passage en banque");
+
+  // Passage suivant : la ligne créée est reconnue, pas recréée.
+  const stored = [...existing, { ...created.transaction, reconciled: false, reconciliation_id: null }];
+  const again = planAccountSync({ ...input, existing: stored });
+  assert.deepEqual([again.create.length, again.upcomingKnown], [0, 3]);
+  // Jour J : la banque comptabilise (autre référence, autre date) → rapprochement, jamais un doublon.
+  const booked = planAccountSync({ ...input, today: "2026-10-09", existing: stored, bankTransactions: [bankTx({ entry_reference: "B9", booking_date: "2026-10-09", transaction_date: "2026-10-09", transaction_amount: { amount: "45" }, creditor: { name: "Free Mobile" } })] });
+  assert.equal(booked.create.length, 0);
+  assert.equal(booked.reconcile[0].transactionId, created.transaction.transaction_id);
+  assert.equal(booked.reconcile[0].reconciliationDate, "2026-10-09");
+  // Sans `today` : comportement précédent, aucune opération à venir.
+  assert.equal(planAccountSync({ ...input, today: null, existing }).create.length, 0);
 });
 
 test("rapport du matin : alertes d'expiration et d'erreur, jamais de doublon d'alerte", () => {

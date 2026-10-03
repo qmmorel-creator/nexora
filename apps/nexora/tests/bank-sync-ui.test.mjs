@@ -55,6 +55,8 @@ test("libellés ignorés et échantillon des opérations écartées", () => {
   assert.match(lines[0], /^En attente \(PDNG\) · 02\/10\/2026 · -12,50\s€ · CB Carrefour$/);
   assert.match(lines[1], /^Ignorée par libellé · 04\/11\/2026/);
   assert.deepEqual(B.bankSyncSampleLines(null), []);
+  assert.match(B.bankSyncResultLine({ created: 1, upcomingKnown: 2, skipped: { upcomingUndated: 1 } }), /2 à venir déjà saisies · 1 à venir sans date/);
+  assert.deepEqual(B.bankSyncSampleLines({ samples: { upcomingUndated: [{ amount: -89, label: "GLC" }] } }).length, 1);
   assert.match(html, /ignorePatterns: String\(patterns \|\| ""\)\.split\("\\n"\)/);
 });
 
