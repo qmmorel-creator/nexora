@@ -32,8 +32,8 @@ export function versFiltres(r: Requete): Filtres {
 }
 
 // Adresse : paramètres courts et lisibles. Réservés au Cockpit (ne jamais
-// réutiliser) : « t » = tâche ouverte, « v » = lentille.
-export const PARAMS_RESERVES = ["t", "v"];
+// réutiliser) : « t » = tâche ouverte, « v » = lentille, « m » = mode du fil.
+export const PARAMS_RESERVES = ["t", "v", "m"];
 const LISTES: [keyof Requete, string][] = [["projets", "p"], ["statuts", "s"], ["responsables", "r"], ["types", "ty"], ["criticites", "c"]];
 export function versParams(r: Requete): URLSearchParams {
   const p = new URLSearchParams(); const d = requeteParDefaut();

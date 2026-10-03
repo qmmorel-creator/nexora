@@ -4,12 +4,20 @@ import type { LectureCle } from "./firebase";
 import { exigerEcriture } from "./garde";
 import { CLES_ECRITURE_OUVERTES } from "./config";
 
+export interface RapportsJour { matin: Rapport | null; soir: Rapport | null; }
+export interface Rapport {
+  reportId?: string;
+  summary?: Record<string, number>;
+  rows?: { occurredAt?: string; treatment?: string; projectType?: string | null; result?: string; taskId?: string | null }[];
+  budget?: { ok: boolean; [k: string]: unknown };
+}
 export interface Source {
   ecouter(cle: string, rappel: (l: LectureCle | null) => void, erreur: (e: Error) => void): () => void;
   modifier(cle: string, transformer: (texte: string) => string): Promise<{ revision: string }>;
+  rapports?(jour: string): Promise<RapportsJour>;
 }
 
-export function sourceMemoire(initial: Record<string, unknown>): Source & { valeur(cle: string): unknown } {
+export function sourceMemoire(initial: Record<string, unknown>, rapports?: (jour: string) => RapportsJour): Source & { valeur(cle: string): unknown } {
   const valeurs = new Map<string, { texte: string; revision: string }>(Object.entries(initial).map(([k, v]) => [k, { texte: JSON.stringify(v), revision: "r0" }]));
   const ecoutes = new Map<string, Set<(l: LectureCle | null) => void>>();
   let n = 0;
@@ -30,5 +38,6 @@ export function sourceMemoire(initial: Record<string, unknown>): Source & { vale
       return { revision };
     },
     valeur(cle) { const v = valeurs.get(cle); return v ? JSON.parse(v.texte) : undefined; },
+    ...(rapports ? { rapports: async (jour: string) => rapports(jour) } : {}),
   };
 }

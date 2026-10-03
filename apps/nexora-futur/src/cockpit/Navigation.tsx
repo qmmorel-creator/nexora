@@ -49,9 +49,10 @@ export function Navigation({ projetActif, vue }: { projetActif?: string; vue: st
   const total = [...ouvertes.values()].reduce((a, b) => a + b, 0);
   return (
     <nav className="nav" aria-label="Navigation principale">
-      <a href="/" className={`nav-item ${vue === "toutes" ? "actif" : ""}`} onClick={(e) => { e.preventDefault(); naviguer("/"); }}>Toutes les tâches<span className="nav-n mono">{total}</span></a>
-      <a href="/?retard=1" className="nav-item" onClick={(e) => { e.preventDefault(); naviguer("/", new URLSearchParams("retard=1")); }}>En retard</a>
-      <a href="/?focus=yes" className="nav-item" onClick={(e) => { e.preventDefault(); naviguer("/", new URLSearchParams("focus=yes")); }}>Focus</a>
+      <a href="/" className={`nav-item ${vue === "fil" ? "actif" : ""}`} aria-current={vue === "fil" ? "page" : undefined} onClick={(e) => { e.preventDefault(); naviguer("/"); }}>Fil du jour</a>
+      <a href="/taches" className={`nav-item ${vue === "toutes" ? "actif" : ""}`} onClick={(e) => { e.preventDefault(); naviguer("/taches"); }}>Toutes les tâches<span className="nav-n mono">{total}</span></a>
+      <a href="/taches?retard=1" className="nav-item" onClick={(e) => { e.preventDefault(); naviguer("/taches", new URLSearchParams("retard=1")); }}>En retard</a>
+      <a href="/taches?focus=yes" className="nav-item" onClick={(e) => { e.preventDefault(); naviguer("/taches", new URLSearchParams("focus=yes")); }}>Focus</a>
       <a href="/archive" className={`nav-item ${vue === "archive" ? "actif" : ""}`} onClick={(e) => { e.preventDefault(); naviguer("/archive"); }}>Archive<span className="nav-n mono">{d.archive.length || ""}</span></a>
       {favorisProjets.length > 0 && <div className="nav-titre surtitre">Favoris</div>}
       {favorisProjets.map((p) => (

@@ -35,3 +35,16 @@ export function donneesDemo(j = aujourdhuiParis()): Record<string, unknown> {
     "nexora:taskDefaults": { assignee: "Quentin Morel", assigneeDefaulted: true },
   };
 }
+
+// Rapports FICTIFS de l'assistant pour la démonstration.
+export function rapportsDemo(jour: string) {
+  return {
+    matin: {
+      reportId: `${jour}-morning`,
+      summary: { emailsAnalyzed: 23, emailsMarkedImportant: 4, tasksCreated: 3, tasksUpdated: 2, duplicatesAvoided: 1, errors: 0 },
+      rows: [{ occurredAt: `${jour}T05:12:00Z`, treatment: "Relance du bureau de contrôle (e-mail de M. Durand)", result: "task_created" }],
+      budget: { ok: true, remaining: 412, expenses: 1688, overBudget: [{ category: "Restaurants" }], toCategorize: 2 },
+    },
+    soir: null,
+  };
+}

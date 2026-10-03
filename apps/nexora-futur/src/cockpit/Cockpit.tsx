@@ -19,6 +19,8 @@ import { Colonnes, Liste } from "./Lignes";
 import { Inspecteur } from "./Inspecteur";
 import { Palette, type Commande } from "./Palette";
 import { useNotifier } from "./Notifications";
+import { FilDuJour } from "./FilDuJour";
+import { aCaser, type ModeJour } from "../donnees/journee";
 import { archiverTache, basculer, creer, dupliquerTache, modifier, remettre, restaurerTache, retirer, statutCyclique } from "./actions";
 
 type Lentille = "liste" | "colonnes";
@@ -32,7 +34,7 @@ const AIDE: [string, string][] = [
 ];
 
 export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
-  const { d, executer, enCours } = useDonnees();
+  const { d, executer, enCours, source } = useDonnees();
   const notifier = useNotifier();
   const route = useRoute();
   const [apparence, changerApparence] = useApparence();
@@ -45,29 +47,31 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const [selection, setSelection] = useState<string | undefined>();
   const zone = useRef<HTMLDivElement>(null);
 
-  const vue = route.segments[0] === "projets" ? "projet" : route.segments[0] === "archive" ? "archive" : "toutes";
+  const vue = route.segments[0] === "projets" ? "projet" : route.segments[0] === "archive" ? "archive" : route.segments[0] === "taches" ? "toutes" : "fil";
+  const modeFil = (["matin", "journee", "soir", "semaine"] as const).find((m) => m === route.params.get("m")) ?? null;
   const projetFixe = vue === "projet" ? route.segments[1] : undefined;
   const projet = d.projets.find((p) => p.id === projetFixe);
   const lentille: Lentille = route.params.get("v") === "colonnes" ? "colonnes" : "liste";
   const ouverte = route.params.get("t") || undefined;
   const r = useMemo(() => depuisParams(route.params), [route.params]);
-  const base = vue === "projet" ? `/projets/${encodeURIComponent(projetFixe || "")}` : vue === "archive" ? "/archive" : "/";
+  const base = vue === "projet" ? `/projets/${encodeURIComponent(projetFixe || "")}` : vue === "archive" ? "/archive" : vue === "toutes" ? "/taches" : "/";
 
-  const majAdresse = useCallback((modif: { r?: Requete; v?: Lentille; t?: string | null }, empiler = false) => {
-    const p = versParams(modif.r ?? r);
+  const majAdresse = useCallback((modif: { r?: Requete; v?: Lentille; t?: string | null; m?: ModeJour }, empiler = false) => {
+    const p = vue === "fil" ? new URLSearchParams() : versParams(modif.r ?? r);
+    const m = modif.m ?? modeFil; if (vue === "fil" && m) p.set("m", m);
     const v = modif.v ?? lentille; if (v !== "liste") p.set("v", v);
     const t = modif.t === undefined ? ouverte : modif.t; if (t) p.set("t", t);
     naviguer(base, p, !empiler);
-  }, [r, lentille, ouverte, base]);
+  }, [r, lentille, ouverte, base, vue, modeFil]);
 
   const ctx: Contexte = useMemo(() => ({ projets: d.projets, statuts: d.statuts, types: d.types, aujourdhui: d.aujourdhui }), [d.projets, d.statuts, d.types, d.aujourdhui]);
   const filtres = useMemo(() => versFiltres(projetFixe ? { ...r, projets: [projetFixe] } : r), [r, projetFixe]);
-  const visibles = useMemo(() => (vue === "archive" ? [] : d.taches.filter((t) => correspond(t, d.metaFiltres, ctx) && correspond(t, filtres, ctx))), [vue, d.taches, d.metaFiltres, filtres, ctx]);
+  const visibles = useMemo(() => (vue === "archive" || vue === "fil" ? [] : d.taches.filter((t) => correspond(t, d.metaFiltres, ctx) && correspond(t, filtres, ctx))), [vue, d.taches, d.metaFiltres, filtres, ctx]);
   const paquets = useMemo(() => {
     const p = grouper(trier(visibles, r.tri, d), lentille === "colonnes" && r.groupe === "aucun" ? "status" : r.groupe, d);
     return r.groupe === "status" ? ouvertesDabord(p, d) : p;
   }, [visibles, r.tri, r.groupe, lentille, d]);
-  const ordre = useMemo(() => paquets.flatMap((p) => p.taches.map((t) => t.id)), [paquets]);
+  const ordre = useMemo(() => (vue === "fil" ? aCaser(d.taches, d.aujourdhui, d).map((t) => t.id) : paquets.flatMap((p) => p.taches.map((t) => t.id))), [vue, paquets, d]);
   const tacheOuverte = d.taches.find((t) => t.id === ouverte);
 
   // Exécution avec retour visible et « Annuler ».
@@ -119,10 +123,14 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const focusChamp = (id: string, champ: string) => { ouvrir(id); setTimeout(() => (document.getElementById(champ) as HTMLElement | null)?.focus(), 50); };
 
   const commandes: Commande[] = useMemo(() => [
-    { id: "lentille-liste", libelle: "Lentille Liste", raccourci: "1", executer: () => majAdresse({ v: "liste" }) },
-    { id: "lentille-colonnes", libelle: "Lentille Colonnes", detail: "kanban par regroupement", raccourci: "2", executer: () => majAdresse({ v: "colonnes" }) },
+    { id: "fil", libelle: "Fil du jour", detail: "accueil", executer: () => naviguer("/") },
+    { id: "fil-soir", libelle: "Bilan du soir", executer: () => naviguer("/", new URLSearchParams("m=soir")) },
+    { id: "fil-semaine", libelle: "Semaine", detail: "fil du jour, 7 jours", executer: () => naviguer("/", new URLSearchParams("m=semaine")) },
+    { id: "toutes", libelle: "Toutes les tâches", executer: () => naviguer("/taches") },
+    { id: "lentille-liste", libelle: "Lentille Liste", raccourci: "1", executer: () => (vue === "fil" ? naviguer("/taches") : majAdresse({ v: "liste" })) },
+    { id: "lentille-colonnes", libelle: "Lentille Colonnes", detail: "kanban par regroupement", raccourci: "2", executer: () => (vue === "fil" ? naviguer("/taches", new URLSearchParams("v=colonnes")) : majAdresse({ v: "colonnes" })) },
     { id: "terminees", libelle: r.terminees ? "Masquer les terminées" : "Afficher les terminées", executer: () => majAdresse({ r: { ...r, terminees: !r.terminees } }) },
-    { id: "retard", libelle: "Voir les tâches en retard", executer: () => naviguer("/", new URLSearchParams("retard=1")) },
+    { id: "retard", libelle: "Voir les tâches en retard", executer: () => naviguer("/taches", new URLSearchParams("retard=1")) },
     { id: "archive", libelle: "Ouvrir l'archive", executer: () => naviguer("/archive") },
     ...(["status", "project", "assignee", "criticality", "period", "aucun"] as const).map((g) => ({ id: `grp-${g}`, libelle: `Grouper par ${({ status: "statut", project: "projet", assignee: "responsable", criticality: "criticité", period: "mois d'échéance", aucun: "rien" })[g]}`, executer: () => majAdresse({ r: { ...r, groupe: g } }) })),
     { id: "mode-sombre", libelle: "Mode sombre", executer: () => changerApparence({ mode: "sombre" }) },
@@ -132,7 +140,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
     { id: "aide", libelle: "Raccourcis clavier", raccourci: "?", executer: () => setAide(true) },
     { id: "reference", libelle: "Référence de l'identité visuelle", executer: () => { location.href = "/reference"; } },
     { id: "deconnexion", libelle: "Se déconnecter", executer: () => { deconnexion(); } },
-  ], [r, majAdresse, changerApparence, apparence.densite]);
+  ], [r, majAdresse, changerApparence, apparence.densite, vue]);
 
   // Clavier global.
   useEffect(() => {
@@ -158,8 +166,8 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         case "d": if (sel) focusChamp(sel, "i-fin"); break;
         case "a": if (sel) focusChamp(sel, "i-resp"); break;
         case "x": case "Delete": if (sel) actionArchiver(sel); break;
-        case "1": majAdresse({ v: "liste" }); break;
-        case "2": majAdresse({ v: "colonnes" }); break;
+        case "1": if (vue === "fil") naviguer("/taches"); else majAdresse({ v: "liste" }); break;
+        case "2": if (vue === "fil") naviguer("/taches", new URLSearchParams("v=colonnes")); else majAdresse({ v: "colonnes" }); break;
         case "?": setAide(true); break;
       }
     };
@@ -186,6 +194,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
       </header>
       <Navigation projetActif={projetFixe} vue={vue === "toutes" && !r.retard && r.focus === "all" ? "toutes" : vue} />
       <main className="zone quadrillage" ref={zone}>
+        {vue === "fil" ? <FilDuJour d={d} source={source} mode={modeFil} setMode={(m) => majAdresse({ m })} selection={selection} onOuvrir={ouvrir} onPatch={actionPatch} onBasculer={actionBasculer} /> : <>
         <div className="zone-tete">
           <Cartouche surtitre={vue === "projet" ? "Projet" : vue === "archive" ? "Tâches archivées · purge après 30 jours" : "Cockpit"} titre={titre}
             meta={vue === "archive" ? <span>{d.archive.length} tâches</span> : <><span>{visibles.length} tâches</span><span className={retards ? "crit" : ""}>{retards} en retard</span><span>{d.charge ? "à jour" : "lecture…"}</span></>}
@@ -210,6 +219,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
           ) : lentille === "colonnes"
             ? <Colonnes paquets={paquets} cat={d} aujourdhui={d.aujourdhui} selection={selection} onSelect={setSelection} onOuvrir={ouvrir} onBasculer={actionBasculer} champ={r.groupe === "aucun" ? "status" : r.groupe} onDeplacer={(id, patch) => actionPatch(id, patch, "Tâche déplacée.")} />
             : <Liste paquets={paquets} cat={d} aujourdhui={d.aujourdhui} selection={selection} onSelect={setSelection} onOuvrir={ouvrir} onBasculer={actionBasculer} />}
+        </>}
       </main>
       {tacheOuverte && (
         <Inspecteur key={tacheOuverte.id} t={tacheOuverte} cat={d} taches={d.taches} aujourdhui={d.aujourdhui}
@@ -223,7 +233,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         <span className="marge-auto"><Kbd>⌘K</Kbd> commandes · <Kbd>?</Kbd> raccourcis</span>
       </footer>
       {palette && <Palette key={palette} ouverte modeInitial={palette} onFermer={() => setPalette(null)} cat={d} taches={d.taches} archive={d.archive} aujourdhui={d.aujourdhui} commandes={commandes}
-        onCreer={actionCreer} onOuvrirTache={(t, archivee) => (archivee ? naviguer("/archive") : (naviguer("/", new URLSearchParams({ t: t.id, ...(t.end && estTerminee(t, d.statuts) ? { fini: "1" } : {}) })), setSelection(t.id)))} onAllerProjet={(id) => naviguer(`/projets/${encodeURIComponent(id)}`)} />}
+        onCreer={actionCreer} onOuvrirTache={(t, archivee) => (archivee ? naviguer("/archive") : ouvrir(t.id))} onAllerProjet={(id) => naviguer(`/projets/${encodeURIComponent(id)}`)} />}
       {aide && (
         <div className="voile" onMouseDown={(e) => e.target === e.currentTarget && setAide(false)}>
           <div className="palette aide" role="dialog" aria-modal="true" aria-label="Raccourcis clavier">

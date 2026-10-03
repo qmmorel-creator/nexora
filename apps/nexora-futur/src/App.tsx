@@ -26,7 +26,7 @@ function AppDemo() {
   const [source, setSource] = useState<Source | null>(null);
   useEffect(() => {
     Promise.all([import("./demo/donnees"), import("./donnees/source")]).then(([d, s]) => {
-      const src = s.sourceMemoire(d.donneesDemo());
+      const src = s.sourceMemoire(d.donneesDemo(), d.rapportsDemo);
       (window as unknown as { __nexoraDemo: unknown }).__nexoraDemo = src;
       setSource(src);
     });
