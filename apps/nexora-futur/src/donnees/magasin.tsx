@@ -55,7 +55,8 @@ export interface Resultat { message?: string; annuler?: () => Promise<void>; }
 export type Mutation = (taches: Tache[], archive: Tache[], cat: Catalogues) => { taches?: Tache[]; archive?: Tache[] };
 
 // Clés JSON modifiables hors tâches (Ref #669).
-export type CleJson = "journalHabitudes" | "nonApplicables" | "prefs";
+export type CleJson = "journalHabitudes" | "nonApplicables" | "prefs"
+  | "projets" | "dossiers" | "statuts" | "types" | "defauts" | "modeles" | "favoris" | "themesHabitudes"; // #663
 export interface BilanMutation { journal?: string; }
 
 interface Contexte {

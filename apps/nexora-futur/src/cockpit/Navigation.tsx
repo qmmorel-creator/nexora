@@ -67,6 +67,7 @@ export function Navigation({ projetActif, vue }: { projetActif?: string; vue: st
       ))}
       <div className="nav-titre surtitre">Projets</div>
       <Arbre dossiers={d.dossiers} projets={d.projets} parent={null} actif={projetActif} compte={(id) => ouvertes.get(id) || 0} profondeur={0} />
+      <a href="/reglages" className={`nav-item nav-reglages ${vue === "reglages" ? "actif" : ""}`} aria-current={vue === "reglages" ? "page" : undefined} onClick={(e) => { e.preventDefault(); naviguer("/reglages"); }}>Réglages</a>
       <div className="nav-pied discret"><Kbd>⌘K</Kbd> commandes · <Kbd>?</Kbd> raccourcis</div>
     </nav>
   );
