@@ -2,6 +2,8 @@ import { readAuditEvents, reportPeriod } from "./nexora.js";
 import { requireFinanceConfig } from "./finance.js";
 import { readBudgetTables } from "./finance-owner.js";
 import { buildBudgetReport } from "../../../lib/finance-budget.mjs";
+import { bankReportSection } from "../../../lib/bank-sync.mjs";
+import { listConnections } from "./bank-sync.js";
 
 function uniqueMessages(events: any[], eventType: string) {
   return new Set(events.filter(event => event.eventType === eventType && event.sourceMessageId).map(event => event.sourceMessageId)).size;
@@ -19,8 +21,12 @@ async function budgetSection(at: Date) {
   const finance = requireFinanceConfig();
   if (finance.missing.length || !finance.secretKey) return { ok: false, error: "finance_configuration_missing" };
   try {
-    const raw = await readBudgetTables({ url: finance.url, secretKey: finance.secretKey });
-    return { ok: true, ...buildBudgetReport(raw, at) };
+    const config = { url: finance.url, secretKey: finance.secretKey };
+    const raw = await readBudgetTables(config);
+    // #677 : accès bancaires (expiration, erreurs du dernier passage). Une
+    // erreur ici n'efface pas le reste du Budget.
+    const banks = await listConnections(config).then((rows) => bankReportSection(rows, at)).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
+    return { ok: true, ...buildBudgetReport(raw, at), banks };
   } catch (error) {
     return { ok: false, error: "finance_read_failed", detail: error instanceof Error ? error.message : String(error) };
   }
