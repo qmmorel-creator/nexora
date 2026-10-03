@@ -19,6 +19,7 @@ export const MATCH_DAYS = 4;
 export const UNCLASSIFIED = "À classer";
 export const CONSENT_WARNING_DAYS = 7;
 export const RESYNC_OVERLAP_DAYS = 10;
+export const UPCOMING_UNDATED_DAYS = 31;
 // Types qui ne sont pas des mouvements bancaires : jamais rapprochés.
 const NOT_BANK_MOVEMENTS = new Set(["Budget", "Ouverture", "Ajustement", "Annulation"]);
 
@@ -79,12 +80,33 @@ export function normalizeBankTransaction(tx) {
   if (!tx || typeof tx !== "object") return null;
   const status = String(tx.status || "BOOK").toUpperCase();
   if (status !== "BOOK") return null;
+  const out = readBankTransaction(tx);
+  return out && out.bankDate ? out : null;
+}
+
+// Paiement carte : numéro de carte masqué dans le libellé (« … 864231******7 »).
+const CARD_NUMBER = /\d{4,}\*{2,}\d+/;
+
+// Opération bancaire À VENIR (#677) : non comptabilisée, datée après
+// `today` (ou sans date), et pas un paiement carte — les paiements de la carte
+// à débit différé, eux aussi non comptabilisés, restent écartés.
+export function normalizeUpcomingTransaction(tx, today) {
+  if (!tx || typeof tx !== "object" || !today) return null;
+  const status = String(tx.status || "BOOK").toUpperCase();
+  if (status === "BOOK") return null;
+  const out = readBankTransaction(tx);
+  if (!out) return null;
+  if (CARD_NUMBER.test(`${out.merchant} ${out.description || ""}`)) return null;
+  if (out.bankDate && out.bankDate <= today) return null;
+  return { ...out, upcoming: true };
+}
+
+function readBankTransaction(tx) {
   const raw = Number(tx.transaction_amount?.amount);
   if (!Number.isFinite(raw) || raw === 0) return null;
   const credit = String(tx.credit_debit_indicator || "").toUpperCase() === "CRDT";
   const amount = Math.round(Math.abs(raw) * 100) / 100 * (credit ? 1 : -1);
-  const bankDate = [tx.booking_date, tx.value_date, tx.transaction_date].find((d) => DATE.test(d || ""));
-  if (!bankDate) return null;
+  const bankDate = [tx.booking_date, tx.value_date, tx.transaction_date].find((d) => DATE.test(d || "")) || null;
   const effectiveDate = DATE.test(tx.transaction_date || "") ? tx.transaction_date : bankDate;
   const counterparty = clean(credit ? tx.debtor?.name : tx.creditor?.name);
   const remittance = clean((Array.isArray(tx.remittance_information) ? tx.remittance_information : [tx.remittance_information]).filter(Boolean).join(" "));
@@ -198,6 +220,9 @@ const SAMPLE_SIZE = 10;
 const sampleOf = (raw) => ({
   status: String(raw?.status || ""),
   date: raw?.booking_date || raw?.value_date || raw?.transaction_date || null,
+  // Diagnostic : où la banque met-elle la date d'une opération à venir ?
+  dates: { booking: raw?.booking_date || null, value: raw?.value_date || null, transaction: raw?.transaction_date || null },
+  fields: Object.keys(raw || {}).filter((k) => raw[k] != null && raw[k] !== "").sort(),
   amount: Number(raw?.transaction_amount?.amount) * (String(raw?.credit_debit_indicator || "").toUpperCase() === "CRDT" ? 1 : -1),
   label: clean((raw?.credit_debit_indicator === "CRDT" ? raw?.debtor?.name : raw?.creditor?.name) || (Array.isArray(raw?.remittance_information) ? raw.remittance_information.join(" ") : raw?.remittance_information) || raw?.note).slice(0, 120),
 });
@@ -206,16 +231,22 @@ const sampleOf = (raw) => ({
 // `existing` : opérations Nexora du compte autour de la fenêtre importée.
 // `skipped.statuses` et `samples` : diagnostic des opérations écartées
 // (statut bancaire, échantillon date / montant / libellé).
-export function planAccountSync({ accountKey, accountId, importFrom, bankTransactions, existing, rules, ignorePatterns = [] }) {
+export function planAccountSync({ accountKey, accountId, importFrom, bankTransactions, existing, rules, ignorePatterns = [], today = null }) {
   if (!accountId) throw new Error("account_id_required");
-  const skipped = { pending: 0, beforeImportFrom: 0, otherCurrency: 0, ignored: 0, invalid: 0, statuses: {} };
-  const samples = { pending: [], ignored: [] };
+  const skipped = { pending: 0, beforeImportFrom: 0, otherCurrency: 0, ignored: 0, invalid: 0, statuses: {}, upcomingUndated: 0 };
+  const samples = { pending: [], ignored: [], upcomingUndated: [] };
   const normalized = [];
+  const upcoming = [];
   for (const raw of bankTransactions || []) {
     const tx = normalizeBankTransaction(raw);
     if (!tx) {
       const status = String(raw?.status || "BOOK").toUpperCase();
       if (status === "BOOK") { skipped.invalid += 1; continue; }
+      const next = normalizeUpcomingTransaction(raw, today);
+      if (next && next.currency === "EUR" && !isIgnoredLabel(next, ignorePatterns)) {
+        upcoming.push({ tx: next, raw });
+        continue;
+      }
       skipped.pending += 1;
       skipped.statuses[status] = (skipped.statuses[status] || 0) + 1;
       if (samples.pending.length < SAMPLE_SIZE) samples.pending.push(sampleOf(raw));
@@ -238,7 +269,7 @@ export function planAccountSync({ accountKey, accountId, importFrom, bankTransac
   const cancelled = new Set(ledger.map((row) => row.cancels_transaction_id).filter(Boolean));
   const candidates = ledger.filter((row) => !NOT_BANK_MOVEMENTS.has(row.transaction_type) && !cancelled.has(row.transaction_id));
 
-  const plan = { create: [], reconcile: [], already: 0, skipped, samples };
+  const plan = { create: [], reconcile: [], already: 0, upcomingKnown: 0, skipped, samples };
   for (const tx of identified) {
     const imported = byId.get(tx.transactionId);
     // Créée lors d'un passage interrompu avant son rapprochement : on le termine.
@@ -270,6 +301,38 @@ export function planAccountSync({ accountKey, accountId, importFrom, bankTransac
     }
     const rule = findMerchantRule(rules, tx, accountId);
     plan.create.push({ transaction: buildImportedTransaction(tx, accountId, rule), reconciliationId: tx.reconciliationId, reconciliationDate: tx.bankDate, ruleId: rule?.rule_id || null });
+  }
+
+  // Opérations à venir, APRÈS les comptabilisées (une saisie future déjà
+  // retenue par une opération comptabilisée ne sert pas deux fois).
+  // - datée : reconnue si une saisie de même compte et montant existe à
+  //   MATCH_DAYS jours (rien n'est écrit), sinon CRÉÉE à sa date future, NON
+  //   rapprochée : le jour où la banque la comptabilise, elle est rapprochée
+  //   (même identifiant, ou même montant à MATCH_DAYS jours), jamais doublée ;
+  // - sans date : reconnue si une saisie future de même montant existe dans
+  //   les UPCOMING_UNDATED_DAYS jours, sinon seulement listée.
+  const free = (row) => !claimed.has(row.transaction_id) && !cancelled.has(row.transaction_id) && !NOT_BANK_MOVEMENTS.has(row.transaction_type);
+  const sameAmount = (row, tx) => Math.abs(Number(row.signed_amount) - tx.amount) < 0.005;
+  const dated = withExternalIds(accountKey, upcoming.filter((u) => u.tx.bankDate).map((u) => u.tx));
+  for (const tx of dated) {
+    if (byId.has(tx.transactionId) || linked.has(tx.reconciliationId)) { plan.upcomingKnown += 1; continue; }
+    const match = ledger
+      .filter((row) => free(row) && sameAmount(row, tx))
+      .map((row) => ({ row, distance: Math.min(dayDistance(row.bank_date, tx.bankDate), dayDistance(row.effective_date, tx.bankDate)) }))
+      .filter((item) => item.distance <= MATCH_DAYS)
+      .sort((a, b) => a.distance - b.distance || String(a.row.transaction_id).localeCompare(String(b.row.transaction_id)))[0];
+    if (match) { claimed.add(match.row.transaction_id); plan.upcomingKnown += 1; continue; }
+    const rule = findMerchantRule(rules, tx, accountId);
+    plan.create.push({ transaction: buildImportedTransaction(tx, accountId, rule), reconciliationId: null, reconciliationDate: null, ruleId: rule?.rule_id || null, upcoming: true });
+  }
+  const horizon = today ? shiftDays(today, UPCOMING_UNDATED_DAYS) : null;
+  for (const { tx, raw } of upcoming.filter((u) => !u.tx.bankDate)) {
+    const match = ledger
+      .filter((row) => free(row) && sameAmount(row, tx) && row.bank_date > today && row.bank_date <= horizon)
+      .sort((a, b) => String(a.bank_date).localeCompare(String(b.bank_date)) || String(a.transaction_id).localeCompare(String(b.transaction_id)))[0];
+    if (match) { claimed.add(match.transaction_id); plan.upcomingKnown += 1; continue; }
+    skipped.upcomingUndated += 1;
+    if (samples.upcomingUndated.length < SAMPLE_SIZE) samples.upcomingUndated.push(sampleOf(raw));
   }
   return plan;
 }

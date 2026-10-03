@@ -242,7 +242,7 @@ async function setReconciled(finance: FinanceConfig, transactionId: string, date
 
 export type AccountSyncResult = {
   accountKey: string; accountId: string | null; label: string | null;
-  created: number; reconciled: number; already: number; remaining?: number;
+  created: number; reconciled: number; already: number; remaining?: number; upcomingKnown?: number;
   skipped?: Record<string, unknown>; samples?: unknown; balance?: unknown; dateFrom?: string; error?: string;
 };
 
@@ -284,10 +284,11 @@ export async function runSync(config: EnableBankingConfig, finance: FinanceConfi
         readExisting(finance, link.account_id, shiftDays(dateFrom, -(MATCH_DAYS + 3)))
       ]);
       result.balance = pickBalance(balances?.balances);
-      const plan = planAccountSync({ accountKey: link.account_key, accountId: link.account_id, importFrom: link.import_from, bankTransactions, existing, rules, ignorePatterns: Array.isArray(link.ignore_patterns) ? link.ignore_patterns : [] });
+      const plan = planAccountSync({ accountKey: link.account_key, accountId: link.account_id, importFrom: link.import_from, bankTransactions, existing, rules, ignorePatterns: Array.isArray(link.ignore_patterns) ? link.ignore_patterns : [], today });
       result.already = plan.already;
       result.skipped = plan.skipped;
       result.samples = plan.samples;
+      result.upcomingKnown = plan.upcomingKnown;
       // Rapprochements d'abord : une saisie existante ne doit jamais être
       // doublée par une création d'un passage interrompu.
       for (const item of plan.reconcile) {
@@ -300,7 +301,9 @@ export async function runSync(config: EnableBankingConfig, finance: FinanceConfi
         if (budget <= 0) break;
         const transaction = item.transaction as Record<string, unknown>;
         await applyFinanceTransactionWrite(finance, "import", transaction, `enable-banking:${transaction.transaction_id}`);
-        await setReconciled(finance, String(transaction.transaction_id), item.reconciliationDate, item.reconciliationId);
+        // Une opération à venir n'est pas encore passée en banque : rapprochée
+        // seulement le jour où la banque la comptabilise.
+        if (item.reconciliationId && item.reconciliationDate) await setReconciled(finance, String(transaction.transaction_id), item.reconciliationDate, item.reconciliationId);
         result.created += 1;
         budget -= 1;
       }
