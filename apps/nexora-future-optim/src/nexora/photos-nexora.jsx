@@ -1,9 +1,12 @@
 /* eslint-disable */
 // @ts-nocheck
-// Fichier GÉNÉRÉ par scripts/extraire-nexora.py — NE PAS MODIFIER À LA MAIN (retour du 03/10/2026).
-// Comparaison des photos corporelles de Nexora (dernier commit du dossier source : 9c48970), reprise telle quelle.
+// Fichier GÉNÉRÉ par scripts/extraire-nexora.py — NE PAS MODIFIER À LA MAIN (retours du 03/10/2026).
+// Photos corporelles de Nexora (dernier commit du dossier source : 9c48970) reprises telles quelles : calcul,
+// import, repères, affinage, rognage, référence, dates, suppression, comparaison. Seule adaptation : la
+// route /api/optim/photos au lieu de /api/nexora/body-photos (voir ADAPTATIONS_PHOTOS).
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useBodyPhotoUrl } from "./photos-adaptateur";
+import { CalendarDays, Crop, Crosshair, Maximize2, Star, Trash2, Upload } from "lucide-react";
+import { auth, financeSankeyToday, ViewToolbarPortal } from "./photos-adaptateur";
 
 // — index.html.part-003, ligne 42274
 // === NEXORA:BODY-PHOTOS:START ===
@@ -364,7 +367,209 @@ function bodyPhotoDecodePlan(size, orientation) {
   return bodyPhotoFitSize(oriented.width, oriented.height);
 }
 // === NEXORA:BODY-PHOTOS:END ===
-// — index.html.part-003, ligne 42835
+
+const BODY_PHOTO_ERRORS = {
+  unauthorized: "Accès refusé : seule la session du propriétaire Nexora accède aux photos.",
+  configuration_missing: "Configuration Nexora incomplète sur le serveur.",
+  payload_too_large: "Photo trop lourde, même après réduction.",
+  unsupported_media_type: "Format refusé par le serveur.",
+  invalid_image: "Image illisible après conversion.",
+  invalid_date: "Date invalide.",
+  not_found: "Photo introuvable (déjà supprimée ?).",
+};
+
+async function bodyPhotoToken() {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Session Nexora absente : reconnecte-toi pour accéder aux photos.");
+  return user.getIdToken();
+}
+
+function bodyPhotoErrorMessage(payload, status) {
+  return BODY_PHOTO_ERRORS[payload?.error] || payload?.detail || payload?.error || `Opération impossible (HTTP ${status}).`;
+}
+
+async function bodyPhotoApi(path, init = {}) {
+  const token = await bodyPhotoToken();
+  const response = await fetch(`/api/optim/photos${path}`, {
+    ...init,
+    cache: "no-store",
+    headers: { authorization: `Bearer ${token}`, ...(init.body && typeof init.body === "string" ? { "content-type": "application/json" } : {}), ...(init.headers || {}) },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.ok) throw new Error(bodyPhotoErrorMessage(payload, response.status));
+  return payload.data;
+}
+
+// Magasin partagé par tous les widgets de la page : une seule liste, des
+// images lues une fois par session (URL d'objet en mémoire, jamais en cache
+// du navigateur ni sur disque).
+const bodyPhotoStore = { photos: null, referenceId: null, error: null, promise: null, listeners: new Set(), urls: new Map() };
+function bodyPhotoNotify() { bodyPhotoStore.listeners.forEach((fn) => fn()); }
+function bodyPhotoLoad(force = false) {
+  if (bodyPhotoStore.promise && !force) return bodyPhotoStore.promise;
+  bodyPhotoStore.error = null;
+  bodyPhotoNotify();
+  bodyPhotoStore.promise = (async () => {
+    try {
+      const data = await bodyPhotoApi("");
+      bodyPhotoStore.photos = data.photos || [];
+      bodyPhotoStore.referenceId = data.referenceId || null;
+    } catch (error) {
+      bodyPhotoStore.error = error instanceof Error ? error.message : String(error);
+      bodyPhotoStore.promise = null;
+    }
+    bodyPhotoNotify();
+  })();
+  return bodyPhotoStore.promise;
+}
+function bodyPhotoPut(photo) {
+  const list = (bodyPhotoStore.photos || []).filter((p) => p.id !== photo.id);
+  bodyPhotoStore.photos = [...list, photo];
+  bodyPhotoNotify();
+}
+async function bodyPhotoPatch(id, body) {
+  const data = await bodyPhotoApi(`/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) });
+  bodyPhotoPut(data.photo);
+  return data.photo;
+}
+async function bodyPhotoSetReference(id) {
+  const data = await bodyPhotoApi("/reference", { method: "PUT", body: JSON.stringify({ id }) });
+  bodyPhotoStore.referenceId = data.referenceId;
+  bodyPhotoNotify();
+}
+async function bodyPhotoDelete(id) {
+  await bodyPhotoApi(`/${encodeURIComponent(id)}`, { method: "DELETE" });
+  bodyPhotoStore.photos = (bodyPhotoStore.photos || []).filter((p) => p.id !== id);
+  if (bodyPhotoStore.referenceId === id) bodyPhotoStore.referenceId = null;
+  const entry = bodyPhotoStore.urls.get(id);
+  if (entry?.url) URL.revokeObjectURL(entry.url);
+  bodyPhotoStore.urls.delete(id);
+  bodyPhotoNotify();
+}
+function bodyPhotoImage(id) {
+  const cached = bodyPhotoStore.urls.get(id);
+  if (cached) return cached.promise;
+  const entry = { url: null, promise: null };
+  entry.promise = (async () => {
+    const token = await bodyPhotoToken();
+    const response = await fetch(`/api/optim/photos/${encodeURIComponent(id)}/image`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
+    if (!response.ok) {
+      bodyPhotoStore.urls.delete(id);
+      throw new Error(bodyPhotoErrorMessage(await response.json().catch(() => ({})), response.status));
+    }
+    entry.url = URL.createObjectURL(await response.blob());
+    return entry.url;
+  })();
+  bodyPhotoStore.urls.set(id, entry);
+  return entry.promise;
+}
+
+function useBodyPhotos() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const listener = () => setTick((t) => t + 1);
+    bodyPhotoStore.listeners.add(listener);
+    bodyPhotoLoad();
+    return () => { bodyPhotoStore.listeners.delete(listener); };
+  }, []);
+  return { photos: bodyPhotoStore.photos, referenceId: bodyPhotoStore.referenceId, error: bodyPhotoStore.error, reload: () => bodyPhotoLoad(true) };
+}
+
+// URL d'objet de l'image ; `enabled` permet de ne charger qu'à l'affichage.
+function useBodyPhotoUrl(id, enabled = true) {
+  const [state, setState] = useState(() => ({ id, url: bodyPhotoStore.urls.get(id)?.url || null, error: null }));
+  useEffect(() => {
+    if (!id || !enabled) return undefined;
+    let alive = true;
+    bodyPhotoImage(id).then(
+      (url) => alive && setState({ id, url, error: null }),
+      (error) => alive && setState({ id, url: null, error: error.message })
+    );
+    return () => { alive = false; };
+  }, [id, enabled]);
+  return state.id === id ? state : { id, url: null, error: null };
+}
+
+// Préparation dans le navigateur : date EXIF lue, image décodée AVEC son
+// orientation EXIF appliquée, réduite au côté long 2 400 px, ré-encodée en
+// JPEG 0,9 par un canvas — ce qui retire toutes les métadonnées (GPS compris).
+// Mémoire (#616, plantage « Out of Memory » à l'import de trois photos) :
+// seul l'en-tête est lu ; l'image est décodée DIRECTEMENT à la taille
+// d'envoi quand le navigateur sait le faire (une photo de 48 Mpx décodée en
+// entier occupe ~190 Mo) ; canevas et image décodée sont libérés aussitôt.
+async function bodyPhotoDecode(file, plan) {
+  if (plan) {
+    try {
+      const small = await createImageBitmap(file, { imageOrientation: "from-image", resizeWidth: plan.width, resizeHeight: plan.height, resizeQuality: "high" });
+      // Contrôle : un navigateur qui réduirait AVANT d'orienter rendrait une
+      // image déformée ; on la jette et on décode en entier.
+      if (Math.abs(small.width - plan.width) <= 1 && Math.abs(small.height - plan.height) <= 1) return small;
+      small.close();
+    } catch { /* option non prise en charge : décodage complet */ }
+  }
+  return createImageBitmap(file, { imageOrientation: "from-image" });
+}
+
+async function bodyPhotoPrepare(file, today) {
+  const head = await file.slice(0, BODY_PHOTO_HEAD_BYTES).arrayBuffer();
+  const exif = bodyPhotoExifInfo(head);
+  const plan = bodyPhotoDecodePlan(bodyPhotoJpegSize(head), exif.orientation);
+  let source;
+  try {
+    source = await bodyPhotoDecode(file, plan);
+  } catch {
+    source = await new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Format non décodable par ce navigateur" + (/heic|heif/i.test(file.type + file.name) ? " (HEIC : utilise Safari, ou convertis la photo en JPEG)." : "."))); };
+      img.src = url;
+    });
+  }
+  const w0 = source.naturalWidth || source.width, h0 = source.naturalHeight || source.height;
+  const { width, height } = bodyPhotoFitSize(w0, h0);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, 0, 0, width, height);
+  if (source.close) source.close();
+  else source.src = "";
+  let blob;
+  try {
+    blob = await new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Conversion JPEG impossible."))), "image/jpeg", BODY_PHOTO_QUALITY));
+  } finally {
+    // Libère tout de suite la mémoire du canevas, sans attendre le ramasse-miettes.
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+  const { date, source: dateSource } = bodyPhotoDefaultDate(exif.date, today);
+  return { blob, width, height, date, dateSource };
+}
+
+// Envoi avec progression (XMLHttpRequest : fetch ne la donne pas).
+function bodyPhotoSend(prepared, key, onProgress) {
+  return bodyPhotoToken().then((token) => new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/optim/photos");
+    xhr.setRequestHeader("authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("content-type", "image/jpeg");
+    xhr.setRequestHeader("x-idempotency-key", key);
+    xhr.setRequestHeader("x-photo-date", prepared.date);
+    xhr.setRequestHeader("x-date-source", prepared.dateSource);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.onload = () => {
+      let payload = {};
+      try { payload = JSON.parse(xhr.responseText); } catch { /* réponse non JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300 && payload.ok) resolve(payload.data.photo);
+      else reject(new Error(bodyPhotoErrorMessage(payload, xhr.status)));
+    };
+    xhr.onerror = () => reject(new Error("Réseau indisponible pendant l'envoi."));
+    xhr.send(prepared.blob);
+  }));
+}
+
 const BODY_PHOTO_CSS = `
 .nx-bp{position:relative;display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;padding:8px;box-sizing:border-box;color:var(--life-text,#18263d);font-size:12px;background:var(--life-surface,#fff)}
 .nx-bp:fullscreen{padding:16px}
@@ -423,9 +628,11 @@ const BODY_PHOTO_CSS = `
 .lp-widget-head-toolbar:has(.nx-bp-tools){flex-wrap:wrap;overflow:visible;row-gap:5px}
 @media (max-width:479px){.nx-bp-thumb{width:78px}.nx-bp-thumb-img{height:80px}}
 `;
-// — index.html.part-003, ligne 42895
+
+// Couleurs des repères : œil gauche, œil droit, nombril.
 const BODY_PHOTO_COLORS = { leftEye: "#2a78d6", rightEye: "#0f9d76", navel: "#eb6834" };
-// — index.html.part-003, ligne 42898
+
+// Taille d'un cadre au rapport largeur/hauteur donné, logé dans une boîte.
 function useBodyPhotoFrame(boxRef, ratio) {
   const [box, setBox] = useState({ w: 0, h: 0 });
   useEffect(() => {
@@ -442,7 +649,10 @@ function useBodyPhotoFrame(boxRef, ratio) {
   const w = Math.min(box.w, box.h * ratio);
   return { w: Math.floor(w), h: Math.floor(w / ratio) };
 }
-// — index.html.part-003, ligne 42918
+
+// Repères et lignes de contrôle dessinés dans le cadre de la référence :
+// ronds = référence, croix = photo de droite transformée. Ligne des yeux et
+// verticale du nombril de la référence pour juger l'alignement d'un coup d'œil.
 function BodyPhotoMarks({ reference, photo, transform, width, height, view }) {
   // `view` : zone rognée (pixels de la référence) ; sans rognage, tout le cadre.
   const v = view || { x: 0, y: 0, w: reference.width };
@@ -473,7 +683,12 @@ function BodyPhotoMarks({ reference, photo, transform, width, height, view }) {
     </svg>
   );
 }
-// — index.html.part-003, ligne 42954
+
+// Comparaison avant / après : référence à gauche, photo choisie à droite,
+// superposées dans le même cadre (taille fixée par la référence). La photo de
+// droite reçoit sa similarité en CSS `transform: matrix(...)` : composée par
+// le GPU, sans redessiner l'image quand le curseur bouge — seul le
+// `clip-path` du calque change.
 function BodyPhotoCompare({ reference, photo, alignment, split, onSplit, onSplitCommit, showLandmarks, crop }) {
   const boxRef = useRef(null);
   const frameRef = useRef(null);
@@ -532,9 +747,193 @@ function BodyPhotoCompare({ reference, photo, alignment, split, onSplit, onSplit
     </div>
   );
 }
-// — index.html.part-003, ligne 43198
+
+// Mode « Placer les repères » : la photo en grand, une consigne par étape,
+// loupe ×4, repères déplaçables à la souris, au doigt et aux flèches.
+function BodyPhotoLandmarkEditor({ photo, onClose }) {
+  const boxRef = useRef(null);
+  const frame = useBodyPhotoFrame(boxRef, photo.width / photo.height);
+  const img = useBodyPhotoUrl(photo.id);
+  const [points, setPoints] = useState(() => ({ leftEye: null, rightEye: null, navel: null, ...(photo.landmarks || {}) }));
+  const [dragKey, setDragKey] = useState(null);
+  const [lens, setLens] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const next = BODY_PHOTO_LANDMARKS.find((l) => !points[l.key]);
+  const k = frame.w / photo.width;
+  const unitFromEvent = (e) => {
+    const rect = e.currentTarget.closest(".nx-bp-frame").getBoundingClientRect();
+    return bodyPhotoToUnit({ x: ((e.clientX - rect.left) / rect.width) * photo.width, y: ((e.clientY - rect.top) / rect.height) * photo.height }, photo.width, photo.height);
+  };
+  const showLens = (u) => setLens(u);
+  const onFrameDown = (e) => {
+    if (dragKey || !next || (e.button !== undefined && e.button !== 0)) return;
+    const u = unitFromEvent(e);
+    setPoints((p) => ({ ...p, [next.key]: u }));
+    showLens(u);
+  };
+  const onFrameMove = (e) => {
+    const u = unitFromEvent(e);
+    if (dragKey) setPoints((p) => ({ ...p, [dragKey]: u }));
+    if (e.pointerType !== "touch" || dragKey) showLens(u);
+  };
+  const onPointDown = (key) => (e) => {
+    e.stopPropagation();
+    setDragKey(key);
+    e.currentTarget.closest(".nx-bp-frame").setPointerCapture?.(e.pointerId);
+  };
+  const endDrag = () => { setDragKey(null); };
+  const onPointKey = (key) => (e) => {
+    const step = e.shiftKey ? 10 : 1;
+    const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); setPoints((p) => ({ ...p, [key]: null })); return; }
+    if (!d) return;
+    e.preventDefault();
+    setPoints((p) => {
+      const px = bodyPhotoToPixels(p[key], photo.width, photo.height);
+      const u = bodyPhotoToUnit({ x: px.x + d[0], y: px.y + d[1] }, photo.width, photo.height);
+      showLens(u);
+      return { ...p, [key]: u };
+    });
+  };
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      await bodyPhotoPatch(photo.id, { landmarks: points });
+      onClose();
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  };
+  const ready = points.leftEye && points.rightEye;
+  const zoom = 4;
+  const lensStyle = lens && img.url ? {
+    backgroundImage: `url(${img.url})`,
+    backgroundSize: `${frame.w * zoom}px ${frame.h * zoom}px`,
+    backgroundPosition: `${63 - lens.x * frame.w * zoom}px ${63 - lens.y * frame.h * zoom}px`,
+  } : null;
+  return (
+    <>
+      <div className="nx-bp-bar" aria-live="polite">
+        <span className="nx-bp-hint grow">
+          {next ? <><strong>Étape {BODY_PHOTO_LANDMARKS.indexOf(next) + 1}/3 — {next.label}.</strong> {next.hint}</>
+            : <><strong>Les trois repères sont placés.</strong> Glisse-les ou sélectionne-en un et utilise les flèches (Maj : 10 px) pour les ajuster.</>}
+          {next?.key === "navel" && " Facultatif : deux yeux suffisent pour aligner, le nombril rend l'alignement plus juste."}
+        </span>
+        {BODY_PHOTO_LANDMARKS.map((l) => points[l.key] && (
+          <button key={l.key} type="button" onClick={() => setPoints((p) => ({ ...p, [l.key]: null }))} title={`Replacer : ${l.label}`}>
+            <span style={{ color: BODY_PHOTO_COLORS[l.key] }}>●</span> Replacer {l.label.toLowerCase()}
+          </button>
+        ))}
+      </div>
+      <div className="nx-bp-stage" ref={boxRef}>
+        {frame.w > 0 && (
+          <div className="nx-bp-frame" data-testid="body-photo-landmarks" style={{ width: frame.w, height: frame.h, cursor: next ? "crosshair" : "default" }}
+            onPointerDown={onFrameDown} onPointerMove={onFrameMove} onPointerUp={endDrag} onPointerCancel={endDrag} onPointerLeave={() => !dragKey && setLens(null)}>
+            {img.url && <img src={img.url} alt={`Photo du ${bodyPhotoFormatDate(photo.date)}`} style={{ width: frame.w, height: frame.h }} />}
+            {BODY_PHOTO_LANDMARKS.map((l, i) => points[l.key] && (
+              <button key={l.key} type="button" className={`nx-bp-point${dragKey === l.key ? " dragging" : ""}`}
+                style={{ left: points[l.key].x * frame.w, top: points[l.key].y * frame.h, background: BODY_PHOTO_COLORS[l.key] }}
+                aria-label={`${l.label} : déplacer avec les flèches, Suppr pour effacer`} data-landmark={l.key}
+                onPointerDown={onPointDown(l.key)} onKeyDown={onPointKey(l.key)} onFocus={() => showLens(points[l.key])}>{i + 1}</button>
+            ))}
+            {lensStyle && <div className="nx-bp-loupe" style={lensStyle} aria-hidden="true" />}
+          </div>
+        )}
+      </div>
+      <div className="nx-bp-bar">
+        {error && <span className="err" role="alert" style={{ color: "#b42318" }}>{error}</span>}
+        <span className="grow" />
+        <button type="button" onClick={onClose}>Annuler</button>
+        <button type="button" className="primary" disabled={!ready || saving} onClick={save}>{saving ? "Enregistrement…" : "Enregistrer les repères"}</button>
+      </div>
+    </>
+  );
+}
+
+// Mode « Affiner » : la photo en transparence (pelure d'oignon) ou en
+// différence sur la référence, ajustements fins composés après le calcul
+// automatique, enregistrés pour CETTE référence.
+function BodyPhotoRefine({ reference, photo, onClose }) {
+  const boxRef = useRef(null);
+  const frame = useBodyPhotoFrame(boxRef, reference.width / reference.height);
+  const refImg = useBodyPhotoUrl(reference.id);
+  const phImg = useBodyPhotoUrl(photo.id);
+  const [adj, setAdj] = useState(() => bodyPhotoNormalizeAdjust(photo.adjust?.[reference.id]));
+  const [opacity, setOpacity] = useState(50);
+  const [difference, setDifference] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const draft = { ...photo, adjust: { ...(photo.adjust || {}), [reference.id]: adj } };
+  const alignment = bodyPhotoAlignment(draft, reference);
+  const k = frame.w / reference.width;
+  const nudge = (axis, dir) => setAdj((a) => bodyPhotoNudge(a, axis, dir));
+  const onKeyDown = (e) => {
+    const map = { ArrowLeft: ["dx", -1], ArrowRight: ["dx", 1], ArrowUp: ["dy", -1], ArrowDown: ["dy", 1], ",": ["rot", -1], ".": ["rot", 1], "-": ["scale", -1], "+": ["scale", 1], "=": ["scale", 1] };
+    const m = map[e.key];
+    if (!m) return;
+    e.preventDefault();
+    for (let i = 0; i < (e.shiftKey ? 10 : 1); i++) nudge(m[0], m[1]);
+  };
+  const persist = async (value) => {
+    setSaving(true);
+    setError("");
+    try {
+      await bodyPhotoPatch(photo.id, { adjust: { referenceId: reference.id, value } });
+      if (value === null) setAdj(bodyPhotoNormalizeAdjust(null));
+      else onClose();
+    } catch (err) {
+      setError(err.message);
+    }
+    setSaving(false);
+  };
+  if (!alignment.ok) return <div className="nx-bp-empty">Repères insuffisants pour affiner.<button type="button" className="lp-btn" onClick={onClose}>Fermer</button></div>;
+  const fmt = (v, d = 1) => v.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d });
+  return (
+    <>
+      <div className="nx-bp-bar">
+        <label>Transparence <input type="range" min={0} max={100} value={opacity} disabled={difference} onChange={(e) => setOpacity(Number(e.target.value))} aria-label="Transparence de la photo" style={{ width: 100, height: "auto", padding: 0, border: 0 }} /></label>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><input type="checkbox" checked={difference} onChange={() => setDifference(!difference)} style={{ height: "auto" }} />Différence</label>
+        <span className="nx-bp-hint grow">Écart moyen des repères : <strong>{fmt(alignment.residual)} px</strong>{!bodyPhotoIsNeutral(adj) ? ` (calcul automatique : ${fmt(alignment.autoResidual)} px)` : ""}</span>
+      </div>
+      <div className="nx-bp-stage" ref={boxRef}>
+        {frame.w > 0 && (
+          <div className="nx-bp-frame" tabIndex={0} aria-label="Superposition : flèches pour décaler, virgule et point pour tourner, moins et plus pour l'échelle" onKeyDown={onKeyDown}
+            data-testid="body-photo-refine" style={{ width: frame.w, height: frame.h }}>
+            {refImg.url && <img src={refImg.url} alt="" style={{ width: frame.w, height: frame.h }} />}
+            {phImg.url && <img src={phImg.url} alt="" data-role="photo"
+              style={{ width: photo.width, height: photo.height, transform: bodyPhotoCssMatrix(alignment.transform, k), opacity: difference ? 1 : opacity / 100, mixBlendMode: difference ? "difference" : "normal" }} />}
+            <BodyPhotoMarks reference={reference} photo={draft} transform={alignment.transform} width={frame.w} height={frame.h} />
+          </div>
+        )}
+      </div>
+      <div className="nx-bp-bar">
+        <button type="button" onClick={() => nudge("dx", -1)} aria-label="Décaler de 1 px à gauche">←</button>
+        <button type="button" onClick={() => nudge("dx", 1)} aria-label="Décaler de 1 px à droite">→</button>
+        <button type="button" onClick={() => nudge("dy", -1)} aria-label="Décaler de 1 px vers le haut">↑</button>
+        <button type="button" onClick={() => nudge("dy", 1)} aria-label="Décaler de 1 px vers le bas">↓</button>
+        <button type="button" onClick={() => nudge("rot", -1)} aria-label="Tourner de 0,1° à gauche">↺ 0,1°</button>
+        <button type="button" onClick={() => nudge("rot", 1)} aria-label="Tourner de 0,1° à droite">↻ 0,1°</button>
+        <button type="button" onClick={() => nudge("scale", -1)} aria-label="Réduire de 0,1 %">− 0,1 %</button>
+        <button type="button" onClick={() => nudge("scale", 1)} aria-label="Agrandir de 0,1 %">+ 0,1 %</button>
+        <span className="nx-bp-hint">{fmt(adj.dx, 0)} / {fmt(adj.dy, 0)} px · {fmt(adj.rot)}° · {fmt(adj.scale)} %</span>
+        <span className="grow" />
+        {error && <span role="alert" style={{ color: "#b42318" }}>{error}</span>}
+        <button type="button" disabled={saving} onClick={() => persist(null)} title="Revenir au calcul automatique à partir des repères">Remise à zéro</button>
+        <button type="button" onClick={onClose}>Fermer</button>
+        <button type="button" className="primary" disabled={saving} onClick={() => persist(adj)}>Enregistrer</button>
+      </div>
+    </>
+  );
+}
+
+// Mode « Rogner » (#633) : tout le cadre de la référence, la photo alignée
+// superposée en transparence, et le cadre gardé — déplaçable par son centre,
+// redimensionnable par ses huit poignées (souris, doigt), au clavier par les
+// flèches (Maj : pas de 5 %) ; Alt + flèches agrandit ou réduit.
 const BODY_PHOTO_CROP_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
-// — index.html.part-003, ligne 43199
 function BodyPhotoCrop({ reference, photo, alignment, crop, onSave, onClose }) {
   const boxRef = useRef(null);
   const frame = useBodyPhotoFrame(boxRef, reference.width / reference.height);
@@ -601,4 +1000,221 @@ function BodyPhotoCrop({ reference, photo, alignment, crop, onSave, onClose }) {
   );
 }
 
-export { BODY_PHOTO_CSS, bodyPhotoSpec, bodyPhotoSorted, bodyPhotoRightPhoto, bodyPhotoAlignment, bodyPhotoFormatDate, bodyPhotoDeltaLabel, bodyPhotoNormalizeCrop, BodyPhotoCompare, BodyPhotoCrop };
+// Vignette de la galerie : image chargée seulement quand elle est visible.
+function BodyPhotoThumb({ photo, isReference, isRight, busy, onAction }) {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined");
+  const [editingDate, setEditingDate] = useState(false);
+  useEffect(() => {
+    if (visible || !ref.current) return undefined;
+    const io = new IntersectionObserver((entries) => entries.some((en) => en.isIntersecting) && setVisible(true), { rootMargin: "200px" });
+    io.observe(ref.current);
+    return () => io.disconnect();
+  }, [visible]);
+  const ready = photo.status === "ready";
+  const img = useBodyPhotoUrl(photo.id, visible && ready);
+  const hasMarks = photo.landmarks?.leftEye && photo.landmarks?.rightEye;
+  return (
+    <div ref={ref} className={`nx-bp-thumb${isReference ? " is-ref" : ""}${isRight ? " is-right" : ""}`} data-photo-id={photo.id}>
+      <button type="button" className="nx-bp-thumb-img" disabled={!ready || isReference} style={img.url ? { backgroundImage: `url(${img.url})` } : undefined}
+        onClick={() => onAction("right", photo)} aria-label={`Comparer la photo du ${bodyPhotoFormatDate(photo.date)}`} title={ready ? "Afficher à droite" : "Import inachevé"} />
+      {isReference && <span className="nx-bp-badge">Référence</span>}
+      {!ready && <span className="nx-bp-badge warn">Import inachevé</span>}
+      {ready && !hasMarks && !isReference && <span className="nx-bp-badge warn" style={{ left: "auto", right: 4 }}>Sans repères</span>}
+      <div className="nx-bp-thumb-date">
+        {editingDate
+          ? <input type="date" autoFocus defaultValue={photo.date} aria-label="Date de la photo" onBlur={() => setEditingDate(false)}
+              onKeyDown={(e) => e.key === "Escape" && setEditingDate(false)}
+              onChange={(e) => { if (bodyPhotoIsDate(e.target.value)) { onAction("date", photo, e.target.value); setEditingDate(false); } }} />
+          : <span title={photo.dateSource === "exif" ? "Date de prise de vue (EXIF)" : photo.dateSource === "manual" ? "Date modifiée" : "Date d'import"}>{bodyPhotoFormatDate(photo.date)}</span>}
+      </div>
+      <div className="nx-bp-thumb-actions">
+        {ready && !isReference && <button type="button" disabled={busy} onClick={() => onAction("reference", photo)} title="Définir comme référence" aria-label="Définir comme référence"><Star size={13} /></button>}
+        {ready && <button type="button" disabled={busy} onClick={() => onAction("landmarks", photo)} title="Placer les repères" aria-label="Placer les repères"><Crosshair size={13} /></button>}
+        {ready && <button type="button" disabled={busy} onClick={() => setEditingDate(true)} title="Modifier la date" aria-label="Modifier la date"><CalendarDays size={13} /></button>}
+        <button type="button" className="danger" disabled={busy} onClick={() => onAction("delete", photo)} title="Supprimer" aria-label="Supprimer la photo"><Trash2 size={13} /></button>
+      </div>
+    </div>
+  );
+}
+
+function WidgetBodyPhotos({ widget, externalToolbarSlot, onUpdateWidget }) {
+  const { photos, referenceId, error, reload } = useBodyPhotos();
+  const spec = bodyPhotoSpec(widget);
+  const update = (patch) => onUpdateWidget && onUpdateWidget({ bodyPhotos: { ...spec, ...patch } });
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+  const [mode, setMode] = useState(null); // { kind: "landmarks" | "refine", id }
+  const [split, setSplit] = useState(spec.split);
+  const [uploads, setUploads] = useState([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => { setSplit(spec.split); }, [spec.split]);
+  useEffect(() => {
+    const onChange = () => setFullscreen(document.fullscreenElement === rootRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const sorted = bodyPhotoSorted(photos || []);
+  const ready = sorted.filter((p) => p.status === "ready");
+  const reference = ready.find((p) => p.id === referenceId) || null;
+  const right = bodyPhotoRightPhoto(sorted, referenceId, spec.rightId);
+  const candidates = ready.filter((p) => p.id !== referenceId);
+  const rightIndex = right ? candidates.findIndex((p) => p.id === right.id) : -1;
+  const alignment = reference && right ? bodyPhotoAlignment(right, reference) : null;
+  const editing = mode ? sorted.find((p) => p.id === mode.id) : null;
+  const crop = reference ? spec.crops[reference.id] || null : null;
+  const saveCrop = (value) => {
+    const crops = { ...spec.crops };
+    if (value) crops[reference.id] = value; else delete crops[reference.id];
+    update({ crops });
+    setMode(null);
+  };
+
+  // Import multiple : séquentiel, l'échec d'un fichier ne bloque pas les
+  // autres ; chaque fichier garde sa clé d'idempotence pour être relancé.
+  const runUpload = async (item) => {
+    const set = (patch) => setUploads((list) => list.map((u) => (u.key === item.key ? { ...u, ...patch } : u)));
+    try {
+      set({ state: "Préparation…", progress: 0, error: "" });
+      const prepared = item.prepared || await bodyPhotoPrepare(item.file, financeSankeyToday());
+      set({ state: "Envoi…", progress: 0, prepared });
+      const photo = await bodyPhotoSend(prepared, item.key, (p) => set({ progress: p }));
+      bodyPhotoPut(photo);
+      set({ state: "Importée", progress: 1, done: true });
+    } catch (err) {
+      set({ state: "Échec", error: err.message || String(err) });
+    }
+  };
+  const addFiles = async (fileList) => {
+    const files = [...(fileList || [])].filter((f) => /^image\//.test(f.type) || /\.(heic|heif|jpe?g|png)$/i.test(f.name));
+    if (!files.length) return;
+    const items = files.map((file) => ({ key: crypto.randomUUID(), file, name: file.name, state: "En attente", progress: 0, error: "" }));
+    setUploads((list) => [...list.filter((u) => !u.done), ...items]);
+    for (const item of items) await runUpload(item);
+    setTimeout(() => setUploads((list) => list.filter((u) => !u.done)), 2500);
+  };
+
+  const act = async (kind, photo, value) => {
+    setActionError("");
+    if (kind === "right") { update({ rightId: photo.id }); setMode(null); return; }
+    if (kind === "landmarks") { setMode({ kind: "landmarks", id: photo.id }); return; }
+    if (kind === "delete" && !window.confirm(`Supprimer définitivement la photo du ${bodyPhotoFormatDate(photo.date)} ? Le fichier stocké sera effacé.`)) return;
+    setBusy(true);
+    try {
+      if (kind === "reference") await bodyPhotoSetReference(photo.id);
+      if (kind === "date") await bodyPhotoPatch(photo.id, { date: value });
+      if (kind === "delete") { await bodyPhotoDelete(photo.id); if (mode?.id === photo.id) setMode(null); }
+    } catch (err) {
+      setActionError(err.message);
+    }
+    setBusy(false);
+  };
+  const step = (dir) => {
+    const next = candidates[rightIndex + dir];
+    if (next) update({ rightId: next.id });
+  };
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else rootRef.current?.requestFullscreen?.().catch(() => {});
+  };
+
+  // En plein écran, l'en-tête du widget n'est plus visible : la barre
+  // d'outils passe alors dans le corps du widget.
+  const toolsInner = (
+      <div className="nx-bp-tools" onPointerDown={(e) => e.stopPropagation()}>
+        <select aria-label="Photo de droite" title="Photo de droite" value={right?.id || ""} disabled={!candidates.length} onChange={(e) => update({ rightId: e.target.value })}>
+          {!candidates.length && <option value="">Aucune photo</option>}
+          {candidates.map((p) => <option key={p.id} value={p.id}>{bodyPhotoFormatDate(p.date)}</option>)}
+        </select>
+        <button type="button" onClick={() => step(-1)} disabled={rightIndex <= 0} aria-label="Photo précédente">‹</button>
+        <button type="button" onClick={() => step(1)} disabled={rightIndex < 0 || rightIndex >= candidates.length - 1} aria-label="Photo suivante">›</button>
+        <button type="button" className={spec.showLandmarks ? "active" : ""} aria-pressed={spec.showLandmarks} onClick={() => update({ showLandmarks: !spec.showLandmarks })}>Repères visibles</button>
+        {reference && right && alignment?.ok && <button type="button" onClick={() => setMode({ kind: "refine", id: right.id })}>Affiner</button>}
+        {reference && right && alignment?.ok && <button type="button" className={crop ? "active" : ""} aria-pressed={!!crop} title={crop ? "Modifier le rognage" : "Rogner la comparaison"} onClick={() => setMode({ kind: "crop", id: reference.id })}><Crop size={12} style={{ verticalAlign: -2 }} /> Rogner</button>}
+        <button type="button" onClick={() => inputRef.current?.click()} title="Importer des photos (JPEG, PNG, HEIC)"><Upload size={12} style={{ verticalAlign: -2 }} /> Importer</button>
+        <button type="button" onClick={toggleFullscreen} aria-pressed={fullscreen} title={fullscreen ? "Quitter le plein écran" : "Plein écran"}><Maximize2 size={12} style={{ verticalAlign: -2 }} /> {fullscreen ? "Quitter" : "Plein écran"}</button>
+        <span className="count">{ready.length} photo{ready.length > 1 ? "s" : ""}</span>
+      </div>
+  );
+  const tools = fullscreen || !externalToolbarSlot
+    ? <div className="nx-bp-bar">{toolsInner}</div>
+    : <ViewToolbarPortal slot={externalToolbarSlot}>{toolsInner}</ViewToolbarPortal>;
+
+  let main;
+  if (error) {
+    main = <div className="nx-bp-empty" role="alert"><div>{error}</div><button type="button" className="lp-btn" onClick={reload}>Réessayer</button></div>;
+  } else if (!photos) {
+    main = <div className="nx-bp-empty">Chargement des photos…</div>;
+  } else if (editing && mode.kind === "landmarks") {
+    main = <BodyPhotoLandmarkEditor key={editing.id} photo={editing} onClose={() => setMode(null)} />;
+  } else if (editing && mode.kind === "crop" && reference && right) {
+    main = <BodyPhotoCrop key={reference.id} reference={reference} photo={right} alignment={alignment} crop={crop} onSave={saveCrop} onClose={() => setMode(null)} />;
+  } else if (editing && mode.kind === "refine" && reference) {
+    main = <BodyPhotoRefine key={`${editing.id}:${reference.id}`} reference={reference} photo={editing} onClose={() => setMode(null)} />;
+  } else if (!sorted.length) {
+    main = (
+      <div className="nx-bp-empty">
+        <strong>Aucune photo : importe ta première photo</strong>
+        <span>Glisse-dépose une ou plusieurs photos ici, ou choisis-les (JPEG, PNG, HEIC si ton navigateur sait la lire).</span>
+        <button type="button" className="lp-btn lp-btn-primary" onClick={() => inputRef.current?.click()}>Importer des photos</button>
+      </div>
+    );
+  } else if (!reference) {
+    main = <div className="nx-bp-empty"><strong>Choisis une photo de référence</strong><span>Clique sur l’étoile d’une vignette : elle servira de cadre et d’« avant » à toutes les comparaisons.</span></div>;
+  } else if (!right) {
+    main = <div className="nx-bp-empty"><strong>Importe une seconde photo</strong><span>La comparaison montre la référence à gauche et une autre photo à droite.</span></div>;
+  } else if (!alignment.ok) {
+    const target = alignment.reason === "reference" ? reference : right;
+    main = (
+      <div className="nx-bp-empty">
+        <strong>{alignment.reason === "reference" ? "La référence n’a pas de repères" : `La photo du ${bodyPhotoFormatDate(right.date)} n’a pas de repères`}</strong>
+        <span>Sans repères (au moins les deux yeux), la photo ne peut pas être alignée ni comparée.</span>
+        <button type="button" className="lp-btn lp-btn-primary" onClick={() => setMode({ kind: "landmarks", id: target.id })}>Placer les repères</button>
+      </div>
+    );
+  } else {
+    main = (
+      <BodyPhotoCompare reference={reference} photo={right} alignment={alignment} split={split} showLandmarks={spec.showLandmarks} crop={crop}
+        onSplit={setSplit} onSplitCommit={(v) => update({ split: Math.round((v ?? split) * 10) / 10 })} />
+    );
+  }
+
+  return (
+    <div className="nx-bp" ref={rootRef} data-testid="body-photos"
+      onDragOver={(e) => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { e.preventDefault(); setDragOver(true); } }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
+      onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer?.files); }}>
+      <style>{BODY_PHOTO_CSS}</style>
+      {tools}
+      <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif" multiple hidden
+        onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+      {main}
+      {uploads.length > 0 && (
+        <div className="nx-bp-uploads" aria-live="polite">
+          {uploads.map((u) => (
+            <div className="nx-bp-upload" key={u.key}>
+              <span title={u.name}>{u.name}</span>
+              <progress max={1} value={u.progress || 0} aria-label={`Progression de ${u.name}`} />
+              <span className={u.error ? "err" : ""}>{u.error ? `Échec : ${u.error}` : u.state}</span>
+              {u.error && <button type="button" className="lp-btn" onClick={() => runUpload(u)}>Réessayer</button>}
+              {u.error && <button type="button" className="lp-btn" onClick={() => setUploads((l) => l.filter((x) => x.key !== u.key))}>Retirer</button>}
+            </div>
+          ))}
+        </div>
+      )}
+      {actionError && <div role="alert" style={{ color: "#b42318" }}>{actionError}</div>}
+      {photos && sorted.length > 0 && !mode && (
+        <div className="nx-bp-gallery" aria-label="Galerie des photos, de la plus ancienne à la plus récente">
+          {sorted.map((p) => <BodyPhotoThumb key={p.id} photo={p} isReference={p.id === referenceId} isRight={p.id === right?.id} busy={busy} onAction={act} />)}
+        </div>
+      )}
+      {dragOver && <div className="nx-bp-drop">Dépose tes photos pour les importer</div>}
+    </div>
+  );
+}
+
+export { BODY_PHOTO_CSS, bodyPhotoSpec, bodyPhotoSorted, bodyPhotoRightPhoto, bodyPhotoAlignment, bodyPhotoFormatDate, bodyPhotoDeltaLabel, bodyPhotoNormalizeCrop, BodyPhotoCompare, BodyPhotoCrop, WidgetBodyPhotos };

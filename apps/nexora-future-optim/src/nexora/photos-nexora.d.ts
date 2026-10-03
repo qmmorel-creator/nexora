@@ -13,3 +13,4 @@ export function bodyPhotoNormalizeCrop(c: unknown): Recadrage | null;
 export function BodyPhotoCompare(p: { reference: PhotoNexora; photo: PhotoNexora; alignment: Alignement; split: number; onSplit: (v: number) => void; onSplitCommit: (v?: number) => void; showLandmarks: boolean; crop: Recadrage | null }): ReactElement;
 export function BodyPhotoCrop(p: { reference: PhotoNexora; photo: PhotoNexora; alignment: Alignement; crop: Recadrage | null; onSave: (c: Recadrage | null) => void; onClose: () => void }): ReactElement;
 export function bodyPhotoSpec(widget: { bodyPhotos?: unknown } | null): { rightId: string; split: number; showLandmarks: boolean; crops: Record<string, Recadrage> };
+export function WidgetBodyPhotos(p: { widget: { bodyPhotos?: unknown }; externalToolbarSlot?: HTMLElement | null; onUpdateWidget: (patch: { bodyPhotos: Record<string, unknown> }) => void }): ReactElement;
