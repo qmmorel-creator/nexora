@@ -6,7 +6,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 const ECRITURES = /\b(setDoc|updateDoc|deleteDoc|addDoc|runTransaction|writeBatch)\b/;
-const AUTORISES: string[] = [];
+// Lot 2 (#655) : unique module d'écriture, protégé par la garde.
+const AUTORISES: string[] = ["donnees/ecriture-firebase.ts"];
 
 function fichiers(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {
