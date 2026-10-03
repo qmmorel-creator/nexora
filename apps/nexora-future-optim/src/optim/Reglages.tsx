@@ -21,7 +21,7 @@ const NOMS_TUILES: Record<TuileAccueil, [string, string]> = {
   journee: ["Journée", "cadran, tâches du jour et retards"], corps: ["Corps", "mesures choisies et habitudes des 7 jours"],
   semaine: ["Semaine", "frise des tâches de la semaine"], projets: ["Projets", "avancement et retards par projet"], argent: ["Argent", "budget du mois"],
 };
-const NOMS_ONGLETS_ARGENT: Record<string, string> = { mois: "Mois", patrimoine: "Patrimoine", pro: "Pro", operations: "Opérations" };
+const NOMS_ONGLETS_ARGENT: Record<string, string> = { mois: "Période", patrimoine: "Patrimoine", pro: "Pro", operations: "Opérations" };
 const NOMS_REGROUPEMENT: Record<string, string> = { jour: "Jour", semaine: "Semaine", mois: "Mois" };
 const NOMS_ECRANS: Record<VueEnregistree["ecran"], string> = { planning: "Planning", projets: "Projets" };
 

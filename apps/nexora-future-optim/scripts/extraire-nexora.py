@@ -65,8 +65,17 @@ sortie = [
   'import { createPortal } from "react-dom";',
   "",
 ]
+# Adaptations documentées (seules différences avec Nexora), appliquées au code extrait.
+# (#690, retour du 03/10/2026) : période libre jusqu'à une année. Au-delà de 62 jours,
+# l'axe du budget cumulé montre le mois au 1er jour au lieu de 365 numéros de jour.
+ADAPTATIONS = [(
+  '<line x1={f.x(k)} x2={f.x(k)} y1={f.H - f.B} y2={f.H - f.B + 3} stroke={I.axis} />\n          <text x={f.x(k)} y={f.H - f.B + 13} textAnchor="middle" style={{ fontSize: f.days.length > 31 ? 7 : 8.5 }}>{Number(d.slice(8))}</text>',
+  '{(f.days.length <= 62 || d.slice(8) === "01") && <line x1={f.x(k)} x2={f.x(k)} y1={f.H - f.B} y2={f.H - f.B + 3} stroke={I.axis} />}\n          <text x={f.x(k)} y={f.H - f.B + 13} textAnchor={f.days.length > 62 ? "start" : "middle"} style={{ fontSize: f.days.length > 31 ? 7 : 8.5 }}>{f.days.length > 62 ? (d.slice(8) === "01" ? ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."][Number(d.slice(5, 7)) - 1] : "") : Number(d.slice(8))}</text>',
+)]
 for part, debut in ELEMENTS:
     ligne, code = bloc(part, debut)
+    for avant, apres in ADAPTATIONS:
+        if avant in code: code = code.replace(avant, apres); sortie.append("// ADAPTÉ pour Optim : voir ADAPTATIONS dans scripts/extraire-nexora.py")
     sortie.append(f"// — {part}, ligne {ligne}")
     sortie.append(code)
 sortie.append("")
@@ -74,3 +83,11 @@ sortie.append("export { " + ", ".join(EXPORTS) + " };")
 cible = pathlib.Path(__file__).resolve().parents[1] / "src/nexora/finance-nexora.jsx"
 cible.write_text("\n".join(sortie) + "\n", encoding="utf-8")
 print("écrit", cible, len(ELEMENTS), "éléments")
+
+# Calculs budgétaires de Nexora (lib/finance-budget.mjs), copiés tels quels :
+# suivi et cumul d'une période libre avec exactement les règles de Nexora.
+lib = (RACINE / "apps/nexora/lib/finance-budget.mjs").read_text(encoding="utf-8")
+SHA_LIB = subprocess.run(["git", "-C", str(RACINE), "log", "-1", "--format=%h", "--", "apps/nexora/lib/finance-budget.mjs"], capture_output=True, text=True).stdout.strip()
+cible2 = pathlib.Path(__file__).resolve().parents[1] / "src/nexora/finance-budget.mjs"
+cible2.write_text("/* eslint-disable */\n// @ts-nocheck\n// Fichier GÉNÉRÉ par scripts/extraire-nexora.py — NE PAS MODIFIER À LA MAIN (Ref #690).\n" + f"// Copie de apps/nexora/lib/finance-budget.mjs (commit {SHA_LIB}).\n" + lib, encoding="utf-8")
+print("écrit", cible2)

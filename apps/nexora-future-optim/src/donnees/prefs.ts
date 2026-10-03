@@ -43,7 +43,9 @@ export interface PrefsCorps { periode: PeriodeCorps; regroupement: RegroupementC
 export const ONGLETS_ARGENT = ["mois", "patrimoine", "pro", "operations"] as const;
 export type OngletArgent = (typeof ONGLETS_ARGENT)[number];
 export const DUREES_PATRIMOINE = [6, 12, 24, 36, 60] as const;
-export interface PrefsArgent { onglet: OngletArgent; patrimoineMois: number; }
+// Période de l'onglet « Période » (ex-« Mois ») : bouton rapide retenu.
+export const CHOIX_PERIODE_ARGENT = ["mois", "mois-prec", "semaine", "annee", "perso"] as const;
+export interface PrefsArgent { onglet: OngletArgent; patrimoineMois: number; periode: (typeof CHOIX_PERIODE_ARGENT)[number]; }
 
 export interface PrefsOptim {
   version: 1;
@@ -64,7 +66,7 @@ export const PREFS_VIDES: PrefsOptim = {
   projets: { zoom: "trimestre", groupe: "aucun", reference: "courante" },
   couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT, tuiles: [...TUILES_ACCUEIL] },
   corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [] },
-  argent: { onglet: "mois", patrimoineMois: 24 },
+  argent: { onglet: "mois", patrimoineMois: 24, periode: "mois" },
   vues: [],
 };
 // Compatibilité : nom attendu par le magasin de données.
@@ -127,7 +129,7 @@ export function normaliserPrefs(v: unknown): PrefsOptim {
     couleursHabitudes: couleurs,
     accueil: { pixels: ac.pixels !== false, corps: Array.isArray(ac.corps) ? mesuresValides(ac.corps) : TUILE_CORPS_DEFAUT, tuiles: Array.isArray(ac.tuiles) ? [...new Set(chaines(ac.tuiles).filter((t): t is TuileAccueil => (TUILES_ACCUEIL as readonly string[]).includes(t)))] : [...TUILES_ACCUEIL] },
     corps: normaliserCorps(b.corps),
-    argent: (() => { const a = objet(b.argent); return { onglet: parmi(a.onglet, ONGLETS_ARGENT, "mois"), patrimoineMois: (DUREES_PATRIMOINE as readonly number[]).includes(a.patrimoineMois as number) ? (a.patrimoineMois as number) : 24 }; })(),
+    argent: (() => { const a = objet(b.argent); return { onglet: parmi(a.onglet, ONGLETS_ARGENT, "mois"), patrimoineMois: (DUREES_PATRIMOINE as readonly number[]).includes(a.patrimoineMois as number) ? (a.patrimoineMois as number) : 24, periode: parmi(a.periode, CHOIX_PERIODE_ARGENT, "mois") }; })(),
     vues: (Array.isArray(b.vues) ? b.vues : []).map(normaliserVue).filter((x): x is VueEnregistree => !!x).slice(0, MAX_VUES),
   };
 }
