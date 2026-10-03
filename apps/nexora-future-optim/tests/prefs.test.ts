@@ -6,6 +6,12 @@ describe("préférences nexora:optimPrefs (#687)", () => {
     expect(normaliserPrefs(null)).toEqual(PREFS_VIDES);
     expect(normaliserPrefs({ gantt: "metro", planning: { zoom: "siecle" }, accueil: { pixels: "oui" } })).toMatchObject({ gantt: "ruban", planning: { zoom: "mois" }, accueil: { pixels: true } });
   });
+  it("argent (#690) : onglet connu et durée de patrimoine parmi 6/12/24/36/60 mois", () => {
+    expect(normaliserPrefs({}).argent).toEqual({ onglet: "mois", patrimoineMois: 24 });
+    expect(normaliserPrefs({ argent: { onglet: "pro", patrimoineMois: 60 } }).argent).toEqual({ onglet: "pro", patrimoineMois: 60 });
+    expect(normaliserPrefs({ argent: { onglet: "bourse", patrimoineMois: 7 } }).argent).toEqual({ onglet: "mois", patrimoineMois: 24 });
+    expect(normaliserPrefs({ argent: "x" }).argent).toEqual({ onglet: "mois", patrimoineMois: 24 });
+  });
   it("couleurs d'habitudes : hexadécimal à 6 chiffres seulement", () => {
     expect(normaliserPrefs({ couleursHabitudes: { h1: "#DC2626", h2: "red", h3: "#123" } }).couleursHabitudes).toEqual({ h1: "#dc2626" });
   });

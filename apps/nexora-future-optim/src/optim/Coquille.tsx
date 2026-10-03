@@ -15,6 +15,7 @@ import { Journee } from "./Journee";
 import { Planning } from "./Planning";
 import { Projets } from "./Projets";
 import { Corps } from "./Corps";
+import { Argent } from "./Argent";
 
 const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"]];
 const PALETTE = ["#16a34a", "#0f9d76", "#0284c7", "#2563eb", "#4f46e5", "#7c3aed", "#db2777", "#dc2626", "#ea580c", "#d97706", "#64748b", "#18263d"];
@@ -122,9 +123,6 @@ function Notification() {
   return <div className="hx-toast" role="status">{notif.texte}{notif.annuler && <> <button type="button" onClick={() => { const a = notif.annuler!; notifier({ texte: "Modification annulée" }); void a(); }}>Annuler</button></>}</div>;
 }
 
-function BientotDisponible({ titre, lot, issue }: { titre: string; lot: string; issue: number }) {
-  return <main className="hx-main"><div className="hx-hello"><h1>{titre}</h1><p>Cet espace arrive avec le {lot} (issue #{issue}), sur le modèle validé du prototype.</p></div></main>;
-}
 
 function Interface({ email, demo }: { email: string; demo?: boolean }) {
   const { d, retard } = useOptim();
@@ -150,7 +148,7 @@ function Interface({ email, demo }: { email: string; demo?: boolean }) {
   else if (ecran === "planning") contenu = <Planning email={email} allerJournee={() => aller("journee")} ouvrirProjet={(id) => aller("projets", id)} />;
   else if (ecran === "projets") contenu = <Projets projetId={route.segments[1] || null} email={email} ouvrirProjet={(id) => naviguer(`/projets/${encodeURIComponent(id)}`)} />;
   else if (ecran === "corps") contenu = <Corps />;
-  else if (ecran === "argent") contenu = <BientotDisponible titre="Argent" lot="lot 3" issue={690} />;
+  else if (ecran === "argent") contenu = <Argent />;
   else contenu = <Accueil aller={aller} />;
   return (
     <div id="hx-app" className="ox-app">

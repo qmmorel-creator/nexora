@@ -26,7 +26,8 @@ const finMois = (ym: string) => new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 
 export function financeDemo(aujourdhui: string): AccesFinance & { etat(): Tx[] } {
   const tx: Tx[] = [];
   let n = 0;
-  const ajouter = (date: string, label: string, amount: number, type: string, category: string, subcategory: string | null, confidence: number | null = 1, accountId = "cc") => tx.push({ id: `demo-${++n}`, date, label, amount, type, accountId, category, subcategory, confidence });
+  // Jamais d'opération après aujourd'hui (cohérence entre ressources).
+  const ajouter = (date: string, label: string, amount: number, type: string, category: string, subcategory: string | null, confidence: number | null = 1, accountId = "cc") => date <= aujourdhui && tx.push({ id: `demo-${++n}`, date, label, amount, type, accountId, category, subcategory, confidence });
   for (let k = -12; k <= 0; k++) {
     const m = mois(aujourdhui, k);
     ajouter(`${m}-01`, "Salaire", 3100, "Revenu", "Salaire", "Paie");
@@ -35,6 +36,7 @@ export function financeDemo(aujourdhui: string): AccesFinance & { etat(): Tx[] }
     ajouter(`${m}-12`, "Station service", -68.9, "Dépense", "Transport", "Carburant");
     ajouter(`${m}-15`, "EDF", -96, "Dépense", "Logement", "Énergie");
     ajouter(`${m}-18`, "Supermarché", -188.4, "Dépense", "Alimentation", "Courses");
+    ajouter(`${m}-20`, "Virement épargne", -150, "Transfert", "Transferts internes", null, 1, "cc");
     ajouter(`${m}-20`, "Virement épargne", 150, "Transfert", "Transferts internes", null, 1, "la");
   }
   const m0 = aujourdhui.slice(0, 7);
@@ -44,6 +46,7 @@ export function financeDemo(aujourdhui: string): AccesFinance & { etat(): Tx[] }
   ajouter(j(1), "Remboursement mutuelle", 42, "Remboursement", "Alimentation", "Sport", 0.9);
   ajouter(j(1), "Salle d'escalade", -180, "Dépense", "Loisirs", "Sport", 1);
 
+  const solde = (id: string, date: string) => COMPTES.find((c) => c.id === id)!.ouverture + tx.filter((t) => t.accountId === id && t.date <= date).reduce((s, t) => s + t.amount, 0);
   const synthese = (month: string): SyntheseBudget => {
     const from = `${month}-01`; const to = finMois(month);
     const dans = tx.filter((t) => t.date >= from && t.date <= to && t.category !== "Transferts internes");
@@ -51,7 +54,6 @@ export function financeDemo(aujourdhui: string): AccesFinance & { etat(): Tx[] }
     const somme = (l: Tx[]) => Math.round(l.reduce((s, t) => s + Math.abs(t.amount), 0) * 100) / 100;
     const tracking = CATEGORIES.filter((c) => c.name !== "Salaire").map((c) => { const actual = somme(depenses.filter((t) => t.category === c.name)); return { category: c.name, color: c.color, budget: c.budget, actual, remaining: c.budget - actual, over: actual > c.budget }; }).filter((c) => c.budget > 0 || c.actual > 0);
     const budget = tracking.reduce((s, c) => s + c.budget, 0);
-    const solde = (id: string, date: string) => COMPTES.find((c) => c.id === id)!.ouverture + tx.filter((t) => t.accountId === id && t.date <= date).reduce((s, t) => s + t.amount, 0) + (id === "cc" ? -tx.filter((t) => t.accountId === "la" && t.date <= date).reduce((s, t) => s + t.amount, 0) : 0);
     const date = to > aujourdhui ? aujourdhui : to;
     const accounts = COMPTES.map((c) => ({ id: c.id, name: c.name, bank: c.bank, type: c.type, balance: Math.round(solde(c.id, date) * 100) / 100, color: c.color, bankColor: c.bankColor, typeColor: c.typeColor })).sort((a, b) => b.balance - a.balance);
     const pairs = new Set(CATEGORIES.flatMap((c) => c.subcategories.map((s) => `${c.name}|${s}`)));
@@ -102,10 +104,17 @@ export function financeDemo(aujourdhui: string): AccesFinance & { etat(): Tx[] }
       }
       if (ressource === "budget-summary") return synthese(params.month || m0);
       if (ressource === "wealth-series") {
-        const pas = params.step === "month" ? 30 : params.step === "day" ? 1 : 7;
+        // Dates comme wealthSeriesDates de Nexora : fin de période, dernier point = fin (bornée à aujourd'hui).
+        const fin = !params.to || params.to > aujourdhui ? aujourdhui : params.to;
         const points: { date: string; balances: number[]; total: number }[] = [];
-        for (let d = params.from || `${mois(aujourdhui, -12)}-01`; d <= (params.to || aujourdhui); d = new Date(Date.parse(`${d}T12:00:00Z`) + pas * 86400000).toISOString().slice(0, 10)) {
-          const s = synthese(d.slice(0, 7)); const b = COMPTES.map((c) => s.wealth.accounts.find((a) => a.id === c.id)!.balance);
+        const dates: string[] = [];
+        for (let c = new Date(`${params.from || `${mois(aujourdhui, -12)}-01`}T12:00:00Z`); c.toISOString().slice(0, 10) <= fin; c.setUTCDate(c.getUTCDate() + 1)) {
+          if (params.step === "month") c.setUTCDate(new Date(Date.UTC(c.getUTCFullYear(), c.getUTCMonth() + 1, 0, 12)).getUTCDate());
+          else if (params.step !== "day") c.setUTCDate(c.getUTCDate() + ((7 - c.getUTCDay()) % 7));
+          const j = c.toISOString().slice(0, 10); dates.push(j > fin ? fin : j);
+        }
+        for (const d of dates) {
+          const b = COMPTES.map((c) => Math.round(solde(c.id, d) * 100) / 100);
           points.push({ date: d, balances: b, total: Math.round(b.reduce((x, y) => x + y, 0)) });
         }
         return { from: params.from, to: params.to, step: params.step || "week", today: aujourdhui, accounts: COMPTES.map(({ id, name, bank, type, color, bankColor, typeColor }) => ({ id, name, bank, type, color, bankColor, typeColor })), points };
