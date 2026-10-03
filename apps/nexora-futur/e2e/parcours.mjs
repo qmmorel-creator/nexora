@@ -328,6 +328,28 @@ try {
   await page.getByRole("listitem", { name: /^CTEX6 : / }).click();
   await page.waitForFunction(() => location.pathname === "/projets/p-ctex6");
 
+  etape = "finances : synthèse, catégorisation, transactions, patrimoine"; console.log("→", etape);
+  await page.keyboard.press("g"); await page.keyboard.press("f");
+  await page.getByRole("region", { name: /^Budget de / }).getByText("Reste à dépenser").waitFor();
+  await page.getByRole("list", { name: "Suivi par catégorie" }).getByText("Loisirs").waitFor();
+  await page.getByLabel("Période de la synthèse").selectOption("previousYear");
+  await page.getByRole("region", { name: "Synthèse sur une période" }).getByText(/^du 01\/01\/\d{4} au 31\/12\/\d{4}$/).waitFor();
+  await page.getByRole("radio", { name: /^À catégoriser \(3\)/ }).click();
+  await page.getByLabel("Catégorie de Achat CB 4521").selectOption("Alimentation");
+  await page.getByLabel("Sous-catégorie de Achat CB 4521").selectOption("Courses");
+  await page.getByRole("row", { name: /Achat CB 4521/ }).getByRole("button", { name: "Valider" }).click();
+  await page.locator(".notif", { hasText: "« Achat CB 4521 » classée en Alimentation · Courses." }).waitFor();
+  await page.getByRole("radio", { name: /^À catégoriser \(2\)/ }).waitFor();
+  assert.deepEqual(await page.evaluate(() => { const t = window.__nexoraDemo.finance.etat().find((x) => x.label === "Achat CB 4521"); return [t.category, t.subcategory, t.confidence]; }), ["Alimentation", "Courses", 1]);
+  await capture("18-finances-categoriser");
+  await page.getByRole("radio", { name: "Transactions" }).click();
+  await page.getByLabel("Rechercher une transaction").fill("escalade");
+  await page.getByRole("table", { name: "Liste des transactions" }).getByText("Salle d'escalade").waitFor();
+  await page.getByRole("radio", { name: "Patrimoine" }).click();
+  await page.getByRole("img", { name: /^Patrimoine net : / }).waitFor();
+  await page.getByRole("radio", { name: "Banque", exact: true }).first().click();
+  await capture("19-finances-patrimoine");
+
   etape = "mode sombre"; console.log("→", etape);
   await page.goto(`http://127.0.0.1:${PORT}/projets/p-ctex6?t=t2`);
   await page.getByRole("complementary", { name: /Fiche : PV Contrôles DREAL/ }).waitFor();

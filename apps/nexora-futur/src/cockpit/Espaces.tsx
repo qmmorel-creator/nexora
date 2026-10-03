@@ -60,7 +60,7 @@ export function Bande({ actif, d, budget }: { actif: Espace; d: Donnees; budget:
 
 export function NavEspace({ espace }: { espace: Espace }) {
   const LOTS: Record<string, [string, string][]> = {
-    finances: [["Synthèse du rapport", "disponible"], ["Budget du mois, transactions, patrimoine, flux", "lot 6 · #659"], ["Devis, factures, Finance PRO", "lot 6 · #659"]],
+    finances: [["Synthèse, période libre", "disponible"], ["À catégoriser, transactions", "disponible"], ["Patrimoine", "disponible"], ["Graphiques budget, cumul, flux", "lot 6b · #659"], ["Devis, factures, Finance PRO", "lot 6b · #659"]],
     corps: [["Habitudes (12 semaines)", "disponible"], ["Cocher les habitudes", "disponible"], ["Sport, santé, photos", "lot 7 · #660"]],
     equipe: [["Charge par personne", "disponible"], ["Charge du personnel, organigramme", "lot 7 · #660"]],
   };
@@ -122,30 +122,6 @@ export function PageCorps({ d }: { d: Donnees }) {
         </div>
         <HabitudesJour jour={jour} />
       </section>
-    </div>
-  );
-}
-
-export function PageFinances({ rapport }: { rapport: Rapport | null }) {
-  const b = rapport?.budget as Record<string, unknown> | undefined;
-  const euros = (n: unknown) => (typeof n === "number" ? `${Math.round(n).toLocaleString("fr-FR")} €` : "—");
-  return (
-    <div className="espace">
-      <Cartouche surtitre="Espace Finances" titre="Budget du mois" meta={<span>source : rapport de 7 h · détail complet au lot 6</span>} />
-      {b?.ok === true ? (
-        <section className="panneau espace-bloc">
-          <dl className="fil-kv">
-            <div><dt>Reste à dépenser</dt><dd className="mono">{euros(b.remaining)}</dd></div>
-            <div><dt>Dépenses</dt><dd className="mono">{euros(b.expenses)}</dd></div>
-            <div><dt>Revenus</dt><dd className="mono">{euros(b.income)}</dd></div>
-            <div><dt>Solde net</dt><dd className="mono">{euros(b.net)}</dd></div>
-            <div><dt>Budget</dt><dd className="mono">{euros(b.budget)}</dd></div>
-            <div><dt>Opérations à catégoriser</dt><dd className="mono">{String(b.toCategorize ?? "—")}</dd></div>
-          </dl>
-          {Array.isArray(b.overBudget) && b.overBudget.length > 0 && <><Surtitre>Catégories dépassées</Surtitre>{(b.overBudget as { category?: string; budget?: number; actual?: number }[]).map((c, i) => <div key={i} className="pp-ligne"><Etat ton="crit" point={false}>dépassé</Etat><span>{c.category}</span><span className="mono discret">{euros(c.actual)} / {euros(c.budget)}</span></div>)}</>}
-          {Array.isArray(b.nearBudget) && b.nearBudget.length > 0 && <><Surtitre>Proches du budget</Surtitre>{(b.nearBudget as { category?: string; budget?: number; actual?: number }[]).map((c, i) => <div key={i} className="pp-ligne"><Etat ton="alerte" point={false}>≥ 90 %</Etat><span>{c.category}</span><span className="mono discret">{euros(c.actual)} / {euros(c.budget)}</span></div>)}</>}
-        </section>
-      ) : <section className="panneau espace-bloc"><p className="discret">Pas de rapport du matin aujourd'hui, ou budget indisponible dans ce rapport. Les widgets Budget complets arrivent au lot 6 (#659).</p></section>}
     </div>
   );
 }

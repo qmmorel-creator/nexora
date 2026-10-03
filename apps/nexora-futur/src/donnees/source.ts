@@ -11,13 +11,23 @@ export interface Rapport {
   rows?: { occurredAt?: string; treatment?: string; projectType?: string | null; result?: string; taskId?: string | null }[];
   budget?: { ok: boolean; [k: string]: unknown };
 }
+// Finances (Ref #659) : lectures relayées vers nexora-project et la seule
+// catégorisation. Le code d'erreur du serveur est conservé pour le message.
+export class ErreurFinance extends Error { constructor(public code: string) { super(code); this.name = "ErreurFinance"; } }
+export type RessourceFinance = "budget-summary" | "wealth-series" | "sankey-data" | "transactions-data";
+export interface Categorisation { transactionId: string; category: string; subcategory: string | null; idempotencyKey: string; }
+export interface AccesFinance {
+  lire(ressource: RessourceFinance, params?: Record<string, string>): Promise<unknown>;
+  categoriser(c: Categorisation): Promise<void>;
+}
 export interface Source {
   ecouter(cle: string, rappel: (l: LectureCle | null) => void, erreur: (e: Error) => void): () => void;
   modifier(cle: string, transformer: (texte: string) => string): Promise<{ revision: string }>;
   rapports?(jour: string): Promise<RapportsJour>;
+  finance?: AccesFinance;
 }
 
-export function sourceMemoire(initial: Record<string, unknown>, rapports?: (jour: string) => RapportsJour): Source & { valeur(cle: string): unknown } {
+export function sourceMemoire(initial: Record<string, unknown>, rapports?: (jour: string) => RapportsJour, finance?: AccesFinance): Source & { valeur(cle: string): unknown } {
   const valeurs = new Map<string, { texte: string; revision: string }>(Object.entries(initial).map(([k, v]) => [k, { texte: JSON.stringify(v), revision: "r0" }]));
   const ecoutes = new Map<string, Set<(l: LectureCle | null) => void>>();
   let n = 0;
@@ -39,5 +49,6 @@ export function sourceMemoire(initial: Record<string, unknown>, rapports?: (jour
     },
     valeur(cle) { const v = valeurs.get(cle); return v ? JSON.parse(v.texte) : undefined; },
     ...(rapports ? { rapports: async (jour: string) => rapports(jour) } : {}),
+    ...(finance ? { finance } : {}),
   };
 }

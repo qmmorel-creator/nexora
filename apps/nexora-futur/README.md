@@ -87,3 +87,15 @@ Trois lentilles de plus, sur la même requête que la liste (filtres, tri, regro
     nexora-project), dérive ou avancement ;
   - **notes** des tableaux de bord en lecture seule (Markdown).
 - Hors périmètre (décision du 2026-10-03) : Fleuve du temps, Cosmos, cartes 3D, Réunions 3D.
+
+## Finances (lot 6a, #659)
+
+- **Relais** `/api/futur/finance/*` (`netlify/functions/futur-finance.mts`). La fonction vérifie le
+  jeton Firebase du propriétaire, puis le transmet à `nexora-project.org/api/nexora/finance-*`.
+  Les calculs sont ceux de `lib/finance-budget.mjs`. **Aucun secret KDM360 n'est copié** sur
+  nexora-futur (décision du 2026-10-03).
+- **Liste blanche** (`_partage/relais-finance.ts`, testée) : quatre lectures (`budget-summary`,
+  `wealth-series`, `sankey-data`, `transactions-data`) et la seule **catégorisation**
+  (`PATCH categoriser`, corps reconstruit).
+- **Vues** : synthèse du mois et d'une période libre, à catégoriser, transactions (recherche,
+  export CSV), patrimoine (répartition, évolution).
