@@ -25,7 +25,7 @@ export function corpsDemo(aujourdhui: string): AccesCorps {
     const t = i / 200;
     records.push({
       date: decalerJour(aujourdhui, -i), weight: Math.round((81.5 - (1 - t) * 3.2 + (a() - 0.5) * 0.8) * 10) / 10, bodyFat: Math.round((21 - (1 - t) * 2.5 + (a() - 0.5)) * 10) / 10,
-      recovery: Math.round(45 + a() * 50), sleepHours: Math.round((6 + a() * 2.4) * 10) / 10, hrv: Math.round(38 + a() * 40), restingHr: Math.round(52 + a() * 9), strain: Math.round((6 + a() * 12) * 10) / 10, steps: Math.round(5000 + a() * 9000),
+      recovery: Math.round(45 + a() * 50), respRate: Math.round((14.2 + a() * 1.4) * 10) / 10, spo2: Math.round((95.6 + a() * 1.8) * 10) / 10, sleepHours: Math.round((6 + a() * 2.4) * 10) / 10, hrv: Math.round(38 + a() * 40), restingHr: Math.round(52 + a() * 9), strain: Math.round((6 + a() * 12) * 10) / 10, steps: Math.round(5000 + a() * 9000),
     });
   }
   // Photos : une silhouette dessinée, la seconde décalée et agrandie pour que l'alignement serve.

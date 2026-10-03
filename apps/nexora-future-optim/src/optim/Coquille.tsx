@@ -14,6 +14,7 @@ import { Accueil } from "./Accueil";
 import { Journee } from "./Journee";
 import { Planning } from "./Planning";
 import { Projets } from "./Projets";
+import { Corps } from "./Corps";
 
 const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"]];
 const PALETTE = ["#16a34a", "#0f9d76", "#0284c7", "#2563eb", "#4f46e5", "#7c3aed", "#db2777", "#dc2626", "#ea580c", "#d97706", "#64748b", "#18263d"];
@@ -148,7 +149,7 @@ function Interface({ email, demo }: { email: string; demo?: boolean }) {
   else if (ecran === "journee") contenu = <Journee />;
   else if (ecran === "planning") contenu = <Planning email={email} allerJournee={() => aller("journee")} ouvrirProjet={(id) => aller("projets", id)} />;
   else if (ecran === "projets") contenu = <Projets projetId={route.segments[1] || null} email={email} ouvrirProjet={(id) => naviguer(`/projets/${encodeURIComponent(id)}`)} />;
-  else if (ecran === "corps") contenu = <BientotDisponible titre="Corps" lot="lot 2" issue={689} />;
+  else if (ecran === "corps") contenu = <Corps />;
   else if (ecran === "argent") contenu = <BientotDisponible titre="Argent" lot="lot 3" issue={690} />;
   else contenu = <Accueil aller={aller} />;
   return (
