@@ -7,8 +7,8 @@ export interface Activite {
 }
 export type PeriodeSport = "all" | "today" | "week" | "month" | "previousMonth" | "year" | "7" | "30" | "90" | "365";
 export const PERIODES_SPORT: { valeur: PeriodeSport; libelle: string }[] = [
-  { valeur: "week", libelle: "Semaine" }, { valeur: "month", libelle: "Mois" }, { valeur: "30", libelle: "30 j" }, { valeur: "90", libelle: "90 j" },
-  { valeur: "year", libelle: "Année" }, { valeur: "365", libelle: "365 j" }, { valeur: "all", libelle: "Tout" },
+  { valeur: "today", libelle: "Auj." }, { valeur: "week", libelle: "Semaine" }, { valeur: "7", libelle: "7 j" }, { valeur: "month", libelle: "Mois" }, { valeur: "previousMonth", libelle: "Mois préc." },
+  { valeur: "30", libelle: "30 j" }, { valeur: "90", libelle: "90 j" }, { valeur: "year", libelle: "Année" }, { valeur: "365", libelle: "365 j" }, { valeur: "all", libelle: "Tout" },
 ];
 export type Mesure = "count" | "total" | "moving" | "distance" | "elevation";
 export const MESURES: { valeur: Mesure; libelle: string; unite: string }[] = [

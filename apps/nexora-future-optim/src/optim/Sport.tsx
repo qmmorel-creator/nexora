@@ -5,6 +5,7 @@
 // - Activité : la carte « Activité et sport », sans le détail des séances.
 // Calculs : src/donnees/sport.ts (resume, repartition, calendrier, portés de Nexora).
 import { useMemo, useState } from "react";
+import { MenuCoches } from "./ListeCoches";
 import { avancementObjectifs, calendrier, couleurSport, duree, formaterValeur, ilYa, nomsSports, PERIODES_SPORT, repartition, resume, type Activite, type PeriodeSport } from "../donnees/sport";
 import { ONGLETS_SPORT, type OngletSport } from "../donnees/prefs";
 import { naviguer, useRoute } from "../navigation/routeur";
@@ -22,11 +23,11 @@ function Periodes({ valeur, choisir, nom }: { valeur: PeriodeSport; choisir: (p:
   return <div className="hx-seg is-xs" role="group" aria-label={nom}>{PERIODES_SPORT.map((p) => <button key={p.valeur} type="button" aria-pressed={valeur === p.valeur} onClick={() => choisir(p.valeur)}>{p.libelle}</button>)}</div>;
 }
 
-function Resume({ activites, ordre }: { activites: Activite[]; ordre: string[] }) {
+function Resume({ activites, toutes, ordre }: { activites: Activite[]; toutes: Activite[]; ordre: string[] }) {
   const { jour, d, prefs, ecrirePrefs } = useOptim();
   const periode = prefs.corps.sportResume;
   const r = useMemo(() => resume(activites, jour, periode, ordre), [activites, jour, periode, ordre]);
-  const obj = useMemo(() => avancementObjectifs(activites, d.objectifsSport, jour), [activites, d.objectifsSport, jour]);
+  const obj = useMemo(() => avancementObjectifs(toutes, d.objectifsSport, jour), [toutes, d.objectifsSport, jour]);
   const max = Math.max(0, ...r.parSport.map((s) => s.hours));
   const ecartSemaine = r.semaine.hours - r.semainePrec.hours;
   const ligne = (t: { count: number; km: number; elevation: number }) => <span className="ox-sp-l"><span>{formaterValeur(t.count, "séances")}</span>{t.km > 0 && <span>{formaterValeur(t.km, "km")}</span>}{t.elevation > 0 && <span>{formaterValeur(t.elevation, "m")} D+</span>}</span>;
@@ -41,8 +42,11 @@ function Resume({ activites, ordre }: { activites: Activite[]; ordre: string[] }
             : <span className="hx-dim">Aucune séance dans le journal.</span>}</div>
         <div className="ox-sp-carte"><small>Semaine en cours</small><b>{h(r.semaine.hours)}</b>{ligne(r.semaine)}
           <span className={`ox-sp-l ${ecartSemaine > 0 ? "is-up" : ecartSemaine < 0 ? "is-down" : ""}`}>{ecartSemaine === 0 ? "comme la semaine dernière à ce jour" : `${ecartSemaine > 0 ? "+" : "−"}${h(Math.abs(ecartSemaine))} par rapport à la semaine dernière à ce jour`}</span>
-          {obj.hebdo && <span className="ox-sp-obj"><span className="ox-sp-jauge"><b style={{ width: `${Math.min(100, obj.hebdo.fait / obj.hebdo.cible * 100)}%` }} /></span>Objectif {h(obj.hebdo.cible)} · {Math.round(obj.hebdo.fait / obj.hebdo.cible * 100)} %</span>}</div>
+          {obj.hebdo && <Jauge ratio={obj.hebdo.ratio} texte={`Objectif ${h(obj.hebdo.cible)} · ${Math.round(obj.hebdo.ratio * 100)} %${obj.hebdo.reste > 0 ? ` · reste ${h(obj.hebdo.reste)}` : ""}`} />}</div>
         <div className="ox-sp-carte"><small>Mois en cours</small><b>{h(r.mois.hours)}</b>{ligne(r.mois)}</div>
+        {obj.annuels.map((g) => <div key={g.id} className="ox-sp-carte"><small title={g.libelle}>Objectif annuel · {g.libelle}</small><b>{formaterValeur(g.fait, "km")}</b>
+          <Jauge ratio={g.ratio} texte={`sur ${formaterValeur(g.cible, "km")} · ${Math.round(g.ratio * 100)} %`} />
+          <span className="ox-sp-l"><span className={g.ecart >= 0 ? "is-up" : "is-down"}>{g.ecart >= 0 ? "En avance" : "En retard"} de {formaterValeur(Math.abs(g.ecart), "km")}</span><span>sur le rythme régulier</span></span></div>)}
       </div>
       <div className="ox-sp-barres" role="list" aria-label={`Heures par sport, ${libPeriode(periode)}`}>
         <div className="ox-sp-bh"><small>Heures par sport · {libPeriode(periode)} · {h(r.totalHeures)}</small><Periodes valeur={periode} nom="Période des heures par sport" choisir={(p) => void ecrirePrefs({ corps: { ...prefs.corps, sportResume: p } })} /></div>
@@ -52,6 +56,11 @@ function Resume({ activites, ordre }: { activites: Activite[]; ordre: string[] }
     </section>
   );
 }
+
+// SportGoalMeter de Nexora (part-003:41305) : jauge verte une fois l'objectif atteint.
+const Jauge = ({ ratio, texte }: { ratio: number; texte: string }) =>
+  <span className="ox-sp-obj" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio * 100)} aria-label={texte}>
+    <span className="ox-sp-jauge"><b className={ratio >= 1 ? "is-ok" : ""} style={{ width: `${Math.max(0, Math.min(1, ratio)) * 100}%` }} /></span>{texte}</span>;
 
 function Repartition({ activites, ordre }: { activites: Activite[]; ordre: string[] }) {
   const { jour, prefs, ecrirePrefs } = useOptim();
@@ -109,6 +118,8 @@ export function Sport() {
   const choisir = (o: OngletSport) => { void ecrirePrefs({ corps: { ...prefs.corps, ongletSport: o } }); naviguer(`/sport/${o}`); };
   const ordre = useMemo(() => nomsSports(activites), [activites]);
   const c = prefs.corps, majCorps = (p: Partial<typeof c>) => void ecrirePrefs({ corps: { ...c, ...p } });
+  // Filtre des sports du tableau de bord (sportFilter de Nexora) : mêmes sports masqués que l'onglet Activité.
+  const filtrees = useMemo(() => (c.sportsMasques.length ? activites.filter((a) => !c.sportsMasques.includes(a.sport)) : activites), [activites, c.sportsMasques]);
   return (
     <main className="hx-main ox-sport" data-scroll>
       <div className="hx-hello hx-row"><div><h1>Sport</h1><p>Journal sportif relayé (Strava). {activites.filter((a) => a.date >= jour.slice(0, 4) + "-01-01" && a.date <= jour).length} séances depuis le 1er janvier.</p></div>
@@ -117,8 +128,10 @@ export function Sport() {
       {erreurSport && <p className="ox-alerte">Sport indisponible : {erreurSport}.</p>}
       {charge && !activites.length && !erreurSport && <p className="hx-dim">Aucune activité relayée.</p>}
       {activites.length > 0 && (onglet === "tableau" ? <>
-        <Resume activites={activites} ordre={ordre} />
-        <div className="ox-sp-grid"><Repartition activites={activites} ordre={ordre} /><CalendrierAnnuel activites={activites} ordre={ordre} /></div>
+        <div className="ox-sp-filtre"><MenuCoches libelle="Sports" options={ordre.map((n) => ({ id: n, libelle: n, couleur: couleurSport(n, ordre) }))} choisis={ordre.filter((n) => !c.sportsMasques.includes(n))} changer={(ids) => majCorps({ sportsMasques: ordre.filter((n) => !ids.includes(n)) })} libelleRecherche="Rechercher un sport" />
+          {c.sportsMasques.length > 0 && <small className="hx-dim">{c.sportsMasques.length} sport{c.sportsMasques.length > 1 ? "s" : ""} masqué{c.sportsMasques.length > 1 ? "s" : ""} · les objectifs annuels comptent leurs propres sports</small>}</div>
+        <Resume activites={filtrees} toutes={activites} ordre={ordre} />
+        <div className="ox-sp-grid"><Repartition activites={filtrees} ordre={ordre} /><CalendrierAnnuel activites={filtrees} ordre={ordre} /></div>
       </> : <section className="hx-tile"><header className="hx-th"><h2>Activité et sport</h2></header><BlocSport activites={activites} c={c} setReg={(r) => majCorps({ regroupementSport: r })} maj={majCorps} detail={false} /></section>)}
       {onglet === "activite" && d.objectifsSport.weeklyHours == null && activites.length > 0 && <p className="hx-hint">Aucun objectif hebdomadaire de sport défini : la ligne d'objectif est masquée.</p>}
     </main>

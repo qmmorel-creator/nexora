@@ -2,7 +2,7 @@
 // configurables (titre libre, jusqu'à quatre mesures), deux colonnes sur grand
 // écran, regroupement Jour / Semaine / Mois, faisceaux de variation ; sport
 // en barres empilées par discipline ; grille des habitudes.
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ajouterJours } from "../donnees/modele";
 import type { ThemeHabitudes } from "../donnees/habitudes";
 import { couleursDuJour, fondFacettes, grilleMois } from "../donnees/heatmap-habitudes";
@@ -160,20 +160,27 @@ export function BlocSport({ activites: toutes, c, setReg, maj, detail = true }: 
 // Thème replié (retour du 03/10/2026) : heatmap mensuelle comme le widget « Heat map »
 // d'habitudes de Nexora ; une case par jour, une facette de couleur par habitude posée.
 const JOURS_SEM = ["L", "M", "M", "J", "V", "S", "D"];
+// Heatmap mensuelle à facettes (widget de Nexora, part-003:14978-15270) : navigation
+// libre dans les mois (passés et à venir) avec retour à aujourd'hui, légende cliquable
+// pour masquer une habitude, week-ends vides en gris léger (habitEmptyCellBg).
 function HeatmapMois({ theme }: { theme: ThemeHabitudes }) {
   const { couleurHabitude, jour, d } = useJour();
   const [decalage, setDecalage] = useState(0);
-  const [a, m] = (() => { const t = Number(jour.slice(0, 4)) * 12 + Number(jour.slice(5, 7)) - 1 + decalage; return [Math.floor(t / 12), t % 12]; })();
+  const [masquees, setMasquees] = useState<string[]>([]);
+  const visible = useMemo(() => (masquees.length ? { ...theme, habits: theme.habits.filter((h) => !masquees.includes(h.id)) } : theme), [theme, masquees]);
+  const [a, m] = (() => { const t = Number(jour.slice(0, 4)) * 12 + Number(jour.slice(5, 7)) - 1 + decalage; return [Math.floor(t / 12), ((t % 12) + 12) % 12]; })();
   const cases = grilleMois(a, m);
   const nom = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(a, m, 15)));
   return <span className="ox-hm" style={{ gridColumn: "2 / -1" }}>
-    <span className="ox-hm-nav"><button type="button" aria-label="Mois précédent" onClick={() => setDecalage(decalage - 1)}>‹</button><b>{nom}</b><button type="button" aria-label="Mois suivant" disabled={decalage >= 0} onClick={() => setDecalage(decalage + 1)}>›</button></span>
+    <span className="ox-hm-nav"><button type="button" aria-label="Mois précédent" onClick={() => setDecalage(decalage - 1)}>‹</button><b>{nom}</b><button type="button" aria-label="Mois suivant" onClick={() => setDecalage(decalage + 1)}>›</button>
+      {decalage !== 0 && <button type="button" className="is-txt" onClick={() => setDecalage(0)} title="Revenir à aujourd'hui">Aujourd'hui</button>}</span>
     <span className="ox-hm-g">{JOURS_SEM.map((j, i) => <i key={"j" + i} className="ox-hm-dow">{j}</i>)}
-      {cases.map((c) => { const cols = couleursDuJour(theme, d.journalHabitudes, c.date, couleurHabitude); const futur = c.date > jour;
-        return <i key={c.date} className={`ox-hm-c ${c.dansMois ? "" : "is-out"} ${c.date === jour ? "is-today" : ""} ${futur ? "is-futur" : ""}`} style={{ background: fondFacettes(cols, "var(--ox-hm-vide)") }}
+      {cases.map((c, i) => { const cols = couleursDuJour(visible, d.journalHabitudes, c.date, couleurHabitude); const futur = c.date > jour, we = i % 7 >= 5;
+        return <i key={c.date} className={`ox-hm-c ${c.dansMois ? "" : "is-out"} ${c.date === jour ? "is-today" : ""} ${futur ? "is-futur" : ""} ${we ? "is-we" : ""}`} style={{ background: fondFacettes(cols, we ? "var(--ox-hm-we)" : "var(--ox-hm-vide)") }}
           title={`${theme.name} · ${dateCourte(c.date)} : ${cols.length ? `${cols.length} habitude${cols.length > 1 ? "s" : ""}` : futur ? "à venir" : "rien"}`}><span>{c.jour}</span></i>; })}
     </span>
-    <span className="ox-hm-leg">{theme.habits.map((h) => <span key={h.id}><i style={{ background: couleurHabitude(h) }} />{h.name}</span>)}</span>
+    <span className="ox-hm-leg" role="group" aria-label={`Habitudes affichées · ${theme.name}`}>{theme.habits.map((h) => { const cache = masquees.includes(h.id); return <button key={h.id} type="button" aria-pressed={!cache} className={cache ? "is-off" : ""} title={cache ? "Afficher cette habitude" : "Masquer cette habitude"}
+      onClick={() => setMasquees(cache ? masquees.filter((x) => x !== h.id) : [...masquees, h.id])}><i style={{ background: couleurHabitude(h) }} />{h.name}</button>; })}</span>
   </span>;
 }
 

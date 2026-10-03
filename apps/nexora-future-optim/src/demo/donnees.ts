@@ -90,6 +90,7 @@ export function donneesDemo(j = aujourdhuiParis()): Record<string, unknown> {
     "nexora:metaTemporalBlocks": [{ id: "mb1", title: "Phase études", startDate: J(-20), endDate: J(15), kind: "phase", color: "#7A5AF8", borderStyle: "solid", dashboardIds: null }],
     "nexora:metaFilters": { showDone: true },
     "nexora:taskDefaults": { assignee: "Quentin Morel", assigneeDefaulted: true },
+    "nexora:taskTemplates": [{ id: "tpl1", name: "Réunion client", values: { taskTypeId: "tt3", criticality: "moyen", assignee: "Vincent Bernard" } }],
   };
 }
 

@@ -55,6 +55,23 @@ export function recalerDependances(taches: Tache[]): Tache[] {
 
 export interface Brouillon extends Partial<Tache> { title: string; }
 
+// Valeurs par défaut et modèles de tâche (Réglages > Création), port de openNewTask et
+// templateToDefaults (part-001:11713-11755). Priorité : ce que la saisie fixe déjà, puis
+// le modèle choisi, puis les valeurs par défaut. Un identifiant qui ne correspond plus à
+// aucun projet, type ou statut est ignoré (écart avec l'amont, qui le recopiait tel quel).
+export interface ValeursCreation { projectId?: string; secondaryProjectId?: string; taskTypeId?: string; statusId?: string; assignee?: string; criticality?: string; milestone?: string; }
+export function appliquerDefauts(b: Brouillon, defauts: ValeursCreation, cat: Catalogues, modele?: ValeursCreation): Brouillon {
+  const r: Brouillon = { ...b };
+  const existe = { projectId: (id: string) => cat.projets.some((p) => p.id === id), secondaryProjectId: (id: string) => cat.projets.some((p) => p.id === id), taskTypeId: (id: string) => cat.types.some((t) => t.id === id), statusId: (id: string) => cat.statuts.some((s) => s.id === id) };
+  for (const v of [modele || {}, defauts]) {
+    for (const k of ["projectId", "secondaryProjectId", "taskTypeId", "statusId"] as const) { const x = v[k]; if (!r[k] && x && existe[k](x)) r[k] = x; }
+    if (!r.assignee && v.assignee) r.assignee = v.assignee;
+    if (!r.criticality && (v.criticality === "urgent" || v.criticality === "moyen" || v.criticality === "bas")) r.criticality = v.criticality;
+    if (r.milestone === undefined && v.milestone) r.milestone = v.milestone === "milestone";
+  }
+  return r;
+}
+
 export function creerTache(taches: Tache[], b: Brouillon, cat: Catalogues, aujourdhui: string, id = nouvelId()): { taches: Tache[]; tache: Tache } {
   const titre = b.title.trim();
   if (!titre) throw new RefusOperation("Le titre est obligatoire.");
