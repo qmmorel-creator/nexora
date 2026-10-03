@@ -20,6 +20,7 @@ export const STYLES_DEF: { id: StyleGantt; libelle: string; aide: string }[] = [
   { id: "ecart", libelle: "Écart", aide: "Deux traits : en haut le temps écoulé, en bas l'avancement. Le rouge entre les deux est le retard pris." },
   { id: "pont", libelle: "Pont", aide: "Une arche du début à la fin ; la partie pleine est l'avancement." },
   { id: "compte", libelle: "Compte à rebours", aide: "Seul le temps restant est plein ; le passé est un pointillé ; « J−n » avant l'échéance." },
+  { id: "jauge", libelle: "Jauge à curseur", aide: "Un rail fin pour la durée, une bille posée à l'avancement ; si la bille est derrière aujourd'hui, l'écart est rouge." },
 ];
 
 export interface Plage { zoom: Zoom; debut: string; fin: string; jours: number; }
@@ -130,6 +131,8 @@ export function formeGantt(style: StyleGantt, t: Tache, l: LigneFrise, r: Plage,
   if (style === "ecart") { const lag = Math.max(0, ecoule - prog); return <><span className="g-time"><i style={{ width: `${ecoule}%` }} /></span><span className="g-done"><i style={{ width: `${prog}%` }} />{lag > 0 && !i.fini && <b style={{ left: `${prog}%`, width: `${lag}%` }} />}</span></>; }
   if (style === "pont") return <><span className="g-arc" /><span className="g-arc is-fill" style={{ clipPath: `inset(0 ${100 - prog}% 0 0)` }} /></>;
   if (style === "compte") { const passe = t.start && t.start > i.jour ? 0 : i.fini ? 100 : dansBarre(r, i.jour, a, b); return <><span className="g-past" style={{ width: `${passe}%` }} /><span className="g-left" style={{ left: `${passe}%` }} /></>; }
+  // Jauge à curseur (retour du 03/10/2026) : rail, part faite, bille ; retard = de la bille à aujourd'hui.
+  if (style === "jauge") { const lag = i.fini ? 0 : Math.max(0, ecoule - prog); return <><span className="g-rail" /><span className="g-fait" style={{ width: `${prog}%` }} />{lag > 0 && <span className="g-lag" style={{ left: `${prog}%`, width: `${lag}%` }} />}<i className={`g-bille ${i.fini ? "is-done" : ""}`} style={{ left: `${prog}%` }} /></>; }
   return <span className="g-bar"><i className="g-prog" style={{ width: `${prog}%` }} /></span>;
 }
 

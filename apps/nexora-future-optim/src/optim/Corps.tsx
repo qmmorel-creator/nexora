@@ -9,6 +9,7 @@ import { couleurSport, nomsSports, type Activite } from "../donnees/sport";
 import { resumeMetrique, seaux, serieMetrique, type Seau } from "../donnees/corps";
 import { GRANDEURS_SPORT, MAX_MESURES_CARTE, PERIODES_CORPS, REGROUPEMENTS, type CarteCorps, type GrandeurSport, type PrefsCorps, type RegroupementCorps } from "../donnees/prefs";
 import { dateCourte, hm, jourCourt, MOIS_C, semaineIso, useOptim } from "./contexte";
+import { PhotosCorps } from "./PhotosCorps";
 import { styleMesure, useCorps } from "./corps-donnees";
 import { useActionsHabitudes, useJour } from "./jour";
 
@@ -219,6 +220,9 @@ export function Corps() {
       </Section>
       <Section id="hab" titre="Habitudes" ouvert={!replie("hab")} basculer={() => basculer("hab")} resume={`${eh.faites}/${eh.total} aujourd'hui`}>
         <GrilleHabitudes n={Math.min(c.periode, 30)} replies={c.replies} basculer={(k) => majCorps({ replies: c.replies.includes(k) ? c.replies.filter((x) => x !== k) : [...c.replies, k] })} />{c.periode > 30 && <p className="hx-hint">Habitudes limitées aux 30 derniers jours pour rester lisibles.</p>}
+      </Section>
+      <Section id="photos" titre="Photos" ouvert={!replie("photos")} basculer={() => basculer("photos")} resume="comparaison de Nexora">
+        <PhotosCorps c={c} maj={majCorps} />
       </Section>
       {d.objectifsSport.weeklyHours == null && activites.length > 0 && <p className="hx-hint">Aucun objectif hebdomadaire de sport défini dans Nexora : la ligne d'objectif est masquée.</p>}
     </main>
