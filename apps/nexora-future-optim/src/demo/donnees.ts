@@ -79,7 +79,11 @@ export function donneesDemo(j = aujourdhuiParis()): Record<string, unknown> {
       { id: "w2", type: "chart", title: "Statuts" },
     ] }] }],
     "nexora:taskBaselines": { t10: { start: J(3), end: J(10), capturedAt: J(-20) } },
-    "nexora:taskArchive": [{ id: "t0", title: "Ancienne relance fournisseur", projectId: "p-ctex6", statusId: "s5", taskTypeId: "tt1", start: J(-90), end: J(-85), archivedAt: new Date(Date.now() - 3 * 86400000).toISOString() }],
+    "nexora:taskArchive": [
+      { id: "t0", title: "Ancienne relance fournisseur", projectId: "p-ctex6", statusId: "s5", taskTypeId: "tt1", start: J(-90), end: J(-85), archivedAt: new Date(Date.now() - 3 * 86400000).toISOString() },
+      { id: "t0b", title: "Réunion de lancement (doublon)", projectId: "p-lot2b", statusId: "s1", taskTypeId: "tt1", start: J(-40), end: J(-40), archivedAt: new Date(Date.now() - 86400000).toISOString() },
+      { id: "t0c", title: "Brouillon de newsletter de septembre", projectId: "p-com", statusId: "s5", taskTypeId: "tt1", start: J(-30), end: J(-25), archivedAt: new Date(Date.now() - 12 * 86400000).toISOString() },
+    ],
     "nexora:favorites": [{ type: "project", id: "p-ctex6" }],
     "nexora:metaFilters": { showDone: true },
     "nexora:taskDefaults": { assignee: "Quentin Morel", assigneeDefaulted: true },

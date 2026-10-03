@@ -7,7 +7,7 @@ import { naviguer, useRoute } from "../navigation/routeur";
 import { analyserSaisie } from "../donnees/saisie";
 import { ajouterJours, CRITICITES, nouvelId, type Tache } from "../donnees/modele";
 import { archiverTache, basculer, creer, dupliquerTache, modifier, remettre, restaurerTache, statutCyclique } from "../donnees/actions";
-import { dateCourte, FournisseurUi, initiales, useOptim, useUi } from "./contexte";
+import { dateCourte, FournisseurUi, initiales, useOptim, useUi, type Notification as Notif } from "./contexte";
 import { installerInfobulles, installerSurvolHabitudes } from "./infobulle";
 import { useGlisser } from "./glisser";
 import { Accueil } from "./Accueil";
@@ -19,9 +19,10 @@ import { Argent } from "./Argent";
 import { Reglages } from "./Reglages";
 import { GardeEcran } from "./Garde";
 import { compterTriage, Triage } from "./Triage";
+import { Archive } from "./Archive";
 import { Phrase } from "./Phrase";
 
-const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["triage", "Triage"], ["phrase", "Phrase"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"]];
+const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["triage", "Triage"], ["phrase", "Phrase"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"], ["archive", "Archive"]];
 
 function Fiche() {
   const { d, projet, statut, fini, retard, joursRetard, executer, jour } = useOptim();
@@ -31,8 +32,8 @@ function Fiche() {
   const p = projet(t.projectId), s = statut(t.statusId), ty = d.types.find((x) => x.id === t.taskTypeId);
   const deps = (t.dependsOn || []).map((id) => d.taches.find((x) => x.id === id)).filter((x): x is Tache => !!x);
   const cl = t.checklist || [], crit = CRITICITES.find((c) => c.id === t.criticality);
-  const action = async (m: Parameters<typeof executer>[0], texte: string, annuler?: () => void) => {
-    try { await executer(m); notifier({ texte, annuler }); } catch (e) { notifier({ texte: `Action refusée : ${(e as Error).message}` }); }
+  const action = async (m: Parameters<typeof executer>[0], texte: string, annuler?: () => void, lien?: Notif["lien"]) => {
+    try { await executer(m); notifier({ texte, annuler, lien }); } catch (e) { notifier({ texte: `Action refusée : ${(e as Error).message}` }); }
   };
   const avant = { ...t };
   return (
@@ -57,7 +58,7 @@ function Fiche() {
         <button type="button" className="hx-btn" onClick={() => void action(statutCyclique(t.id), "Statut suivant", () => void executer(remettre([avant])))}>Statut suivant</button>
         <button type="button" className="hx-btn" onClick={() => void action(modifier(t.id, { ...(t.start ? { start: ajouterJours(t.start < jour ? jour : t.start, t.start < jour ? 0 : 1) } : {}), end: ajouterJours((t.end || jour) < jour ? jour : t.end || jour, (t.end || jour) < jour ? 0 : 1) }), `« ${t.title} » reportée`, () => void executer(remettre([avant])))}>Reporter</button>
         <button type="button" className="hx-btn" onClick={() => { const n: { id?: string } = {}; void action(dupliquerTache(t.id, n), `« ${t.title} » dupliquée`); }}>Dupliquer</button>
-        <button type="button" className="hx-btn is-ghost" onClick={() => { ouvrir(null); void action(archiverTache(t.id), `« ${t.title} » archivée`, () => void executer(restaurerTache(t.id))); }}>Archiver</button>
+        <button type="button" className="hx-btn is-ghost" onClick={() => { ouvrir(null); void action(archiverTache(t.id), `« ${t.title} » archivée`, () => void executer(restaurerTache(t.id)), { libelle: "Voir l'archive", aller: () => naviguer("/archive") }); }}>Archiver</button>
       </footer>
     </aside>
   );
@@ -98,7 +99,7 @@ function Notification() {
   const { notif, notifier } = useUi();
   useEffect(() => { if (!notif) return; const t = setTimeout(() => notifier(null), 6000); return () => clearTimeout(t); }, [notif, notifier]);
   if (!notif) return null;
-  return <div className="hx-toast" role="status">{notif.texte}{notif.annuler && <> <button type="button" onClick={() => { const a = notif.annuler!; notifier({ texte: "Modification annulée" }); void a(); }}>Annuler</button></>}</div>;
+  return <div className="hx-toast" role="status">{notif.texte}{notif.annuler && <> <button type="button" onClick={() => { const a = notif.annuler!; notifier({ texte: "Modification annulée" }); void a(); }}>Annuler</button></>}{notif.lien && <> <button type="button" onClick={() => { const l = notif.lien!; notifier(null); l.aller(); }}>{notif.lien.libelle}</button></>}</div>;
 }
 
 
@@ -130,12 +131,13 @@ function Interface({ email, demo }: { email: string; demo?: boolean }) {
   else if (ecran === "argent") contenu = <Argent />;
   else if (ecran === "triage") contenu = <Triage />;
   else if (ecran === "phrase") contenu = <Phrase />;
+  else if (ecran === "archive") contenu = <Archive />;
   else contenu = <Accueil aller={aller} />;
   return (
     <div id="hx-app" className="ox-app">
       {demo && <div className="demo"><b>DÉMO</b> Données fictives en mémoire · rien n'est enregistré</div>}
       <header className="hx-top"><span className="hx-logo"><i />Nexora</span>
-        <nav className="hx-nav" aria-label="Sections">{NAV.map(([id, l]) => <button key={id} type="button" aria-current={ecran === id ? "page" : "false"} onClick={() => aller(id)}>{l}{id === "projets" && nbRetard > 0 && <em>{nbRetard}</em>}{id === "triage" && nbTriage > 0 && <em className="is-info" title="Cartes du triage du matin">{nbTriage}</em>}</button>)}</nav>
+        <nav className="hx-nav" aria-label="Sections">{NAV.map(([id, l]) => <button key={id} type="button" aria-current={ecran === id ? "page" : "false"} onClick={() => aller(id)}>{l}{id === "projets" && nbRetard > 0 && <em>{nbRetard}</em>}{id === "archive" && d.archive.length > 0 && <em className="is-info" title="Tâches archivées">{d.archive.length}</em>}{id === "triage" && nbTriage > 0 && <em className="is-info" title="Cartes du triage du matin">{nbTriage}</em>}</button>)}</nav>
         <span className="ox-user" title={email}>{email}</span>
         <button type="button" className="hx-btn is-primary" onClick={() => setSaisie(true)}>+ Nouvelle tâche</button>
         <button type="button" className="hx-gear" aria-label="Réglages" title="Réglages" onClick={() => setReglages("accueil")}>⚙</button>
