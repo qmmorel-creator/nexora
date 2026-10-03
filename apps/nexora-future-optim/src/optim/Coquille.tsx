@@ -69,15 +69,17 @@ function Saisie() {
   const { d, jour, executer } = useOptim();
   const { saisie, setSaisie, notifier, ouvrir } = useUi();
   const [texte, setTexte] = useState("");
+  const [modeleId, setModeleId] = useState("");
   const ctx = useMemo(() => ({ aujourdhui: jour, personnes: d.membres.map((m) => ({ id: m.name, nom: m.name })), projets: d.projets.map((p) => ({ id: p.id, nom: p.name || p.id })), types: d.types.map((t) => ({ id: t.id, nom: t.name || t.id })), criticites: [{ valeur: "urgent", alias: ["urgent", "urg"] }, { valeur: "moyen", alias: ["moyen"] }, { valeur: "bas", alias: ["bas"] }] }), [d.membres, d.projets, d.types, jour]);
   if (!saisie) return null;
   const s = analyserSaisie(texte, ctx);
-  const fermer = () => { setSaisie(false); setTexte(""); };
+  const fermer = () => { setSaisie(false); setTexte(""); setModeleId(""); };
+  const modele = d.modeles.find((m) => m.id === modeleId);
   const soumettre = async (e: FormEvent) => {
     e.preventDefault(); if (!s.titre.trim()) return;
     const id = nouvelId();
     try {
-      await executer(creer({ title: s.titre, ...(s.start ? { start: s.start } : {}), ...(s.end ? { end: s.end } : {}), ...(s.startTime ? { startTime: s.startTime } : {}), ...(s.endTime ? { endTime: s.endTime } : {}), ...(s.assignee ? { assignee: s.assignee } : {}), ...(s.projectId ? { projectId: s.projectId } : {}), ...(s.taskTypeId ? { taskTypeId: s.taskTypeId } : {}), ...(s.criticality ? { criticality: s.criticality as Tache["criticality"] } : {}) }, jour, id));
+      await executer(creer({ title: s.titre, ...(s.start ? { start: s.start } : {}), ...(s.end ? { end: s.end } : {}), ...(s.startTime ? { startTime: s.startTime } : {}), ...(s.endTime ? { endTime: s.endTime } : {}), ...(s.assignee ? { assignee: s.assignee } : {}), ...(s.projectId ? { projectId: s.projectId } : {}), ...(s.taskTypeId ? { taskTypeId: s.taskTypeId } : {}), ...(s.criticality ? { criticality: s.criticality as Tache["criticality"] } : {}) }, jour, id, { defauts: d.defauts, modele: modele?.values }));
       fermer(); notifier({ texte: `Tâche « ${s.titre} » créée` }); ouvrir(id);
     } catch (x) { notifier({ texte: `Création refusée : ${(x as Error).message}` }); }
   };
@@ -91,7 +93,8 @@ function Saisie() {
       <div className="hx-pick"><span>Projet</span>{d.projets.slice(0, 10).map((p) => <button key={p.id} type="button" onClick={() => ajouter(`#${(p.name || "").replace(/\s/g, "")}`)}><i style={{ background: p.color || "#94a3b8" }} />{p.name}</button>)}</div>
       <div className="hx-pick"><span>Quand</span>{["aujourd'hui", "demain", "vendredi", "lundi"].map((x) => <button key={x} type="button" onClick={() => ajouter(x)}>{x}</button>)}</div>
       <div className="hx-pick"><span>Qui</span>{d.membres.slice(0, 8).map((m) => <button key={m.id} type="button" onClick={() => ajouter(`@${m.name.split(" ")[0]}`)}>{m.name.split(" ")[0]}</button>)}</div>
-      <p className="hx-hint">Écrivez naturellement : #projet, @personne, !urgent, un jour, une heure.</p>
+      {d.modeles.length > 0 && <div className="hx-pick" role="group" aria-label="Modèle de tâche"><span>Modèle</span><button type="button" aria-pressed={!modeleId} onClick={() => setModeleId("")}>Aucun</button>{d.modeles.map((m) => <button key={m.id} type="button" aria-pressed={m.id === modeleId} onClick={() => setModeleId(m.id === modeleId ? "" : m.id)}>{m.name || "Sans nom"}</button>)}</div>}
+      <p className="hx-hint">Écrivez naturellement : #projet, @personne, !urgent, un jour, une heure. Ce qui n'est pas précisé vient du modèle choisi, puis des valeurs par défaut des Réglages.</p>
       <footer><button type="button" className="hx-btn is-ghost" onClick={fermer}>Annuler</button><button type="submit" className="hx-btn is-primary" disabled={!s.titre.trim()}>Créer la tâche</button></footer>
     </form></>;
 }

@@ -1,7 +1,7 @@
 // Actions du Cockpit (Ref #655) : chaque action est une mutation rejouable,
 // accompagnée de son inverse pour « Annuler ».
 import type { Mutation } from "./magasin";
-import { archiver, basculerTerminee, creerTache, dupliquer, modifierPlusieurs, modifierTache, restaurer, statutSuivant, type Brouillon } from "./operations";
+import { appliquerDefauts, archiver, basculerTerminee, creerTache, dupliquer, modifierPlusieurs, modifierTache, restaurer, statutSuivant, type Brouillon, type ValeursCreation } from "./operations";
 import type { Tache } from "./modele";
 
 // Remet des tâches dans l'état capturé (si elles existent encore).
@@ -23,7 +23,9 @@ export const statutCyclique = (id: string): Mutation => (taches, _a, cat) => {
 };
 export const archiverTache = (id: string): Mutation => (taches, archive) => archiver(taches, archive, id, new Date().toISOString());
 export const restaurerTache = (id: string): Mutation => (taches, archive) => restaurer(taches, archive, id);
-export const creer = (b: Brouillon, aujourdhui: string, id: string): Mutation => (taches, _a, cat) => ({ taches: creerTache(taches, b, cat, aujourdhui, id).taches });
+// valeurs : valeurs par défaut et modèle choisi (Réglages > Création), appliqués sur les catalogues à jour.
+export const creer = (b: Brouillon, aujourdhui: string, id: string, valeurs?: { defauts: ValeursCreation; modele?: ValeursCreation }): Mutation => (taches, _a, cat) =>
+  ({ taches: creerTache(taches, valeurs ? appliquerDefauts(b, valeurs.defauts, cat, valeurs.modele) : b, cat, aujourdhui, id).taches });
 export const dupliquerTache = (id: string, nouvel: { id?: string }): Mutation => (taches, _a, cat) => {
   const r = dupliquer(taches, id, cat);
   nouvel.id = r.tache.id;

@@ -66,7 +66,7 @@ export function OngletProjets() {
   const { notifier } = useUi();
   const ecrire = useEcrire();
   const [dossierNouveau, setDossierNouveau] = useState("");
-  const [reaffecter, setReaffecter] = useState<{ id: string; vers: string } | null>(null);
+  const [reaffecter, setReaffecter] = useState<{ id: string; vers: string; tout?: boolean } | null>(null);
   const [plus, setPlus] = useState<string | null>(null);
   const majP = (id: string, patch: Partial<Projet>) => ecrire("projets", (v) => majElement<Projet>(v, id, patch));
   const dossiers = d.dossiers.filter((f) => f.id !== "folder-a-trier");
@@ -81,9 +81,21 @@ export function OngletProjets() {
     } catch (e) { notifier({ texte: `Suppression refusée : ${(e as Error).message}` }); }
     setReaffecter(null);
   };
+  // ProjectDeleteChoiceModal de Nexora (part-002:15056), choix « Supprimer ces tâches avec
+  // le projet » : seules les tâches actives sont supprimées, l'archive n'est pas touchée.
+  const supprimerAvecTaches = async (p: Projet) => {
+    try {
+      const n = d.taches.filter((t) => t.projectId === p.id).length;
+      await executer((taches) => ({ taches: taches.filter((t) => t.projectId !== p.id) }));
+      await ecrire("projets", (v) => retirerElement(v, p.id), `Projet « ${p.name} » supprimé avec ${n} tâche${n > 1 ? "s" : ""}.`);
+    } catch (e) { notifier({ texte: `Suppression refusée : ${(e as Error).message}` }); }
+    setReaffecter(null);
+  };
+  // Tâches actives du projet sur un statut ou un type masqué (elles le gardent, mais il n'est plus proposé).
+  const utilisesMasques = (p: Projet, champ: "statusId" | "taskTypeId", id: string) => d.taches.filter((t) => t.projectId === p.id && t[champ] === id).length;
   return <>
     <AvisPartage />
-    <Bloc titre="Projets" aide="Couleur, nom, dossier, priorité ; statuts et types masqués par projet. Un projet qui a des tâches se supprime en les réaffectant à un autre projet (comme dans Nexora)."
+    <Bloc titre="Projets" aide="Couleur, nom, dossier, priorité ; statuts et types masqués par projet. Un projet qui a des tâches se supprime en les réaffectant à un autre projet, ou avec ses tâches actives (comme dans Nexora : l'archive n'est pas touchée)."
       actions={<Ajout placeholder="Nouveau projet" libelle="Nom du nouveau projet" onCreer={(n) => ecrire("projets", (v) => ajouterElement<Projet>(v, { id: nouvelIdReglage(), name: n, color: COULEURS_REGLAGES[d.projets.length % COULEURS_REGLAGES.length], folderId: dossierNouveau || "folder-a-trier", priority: "normal" }), `Projet « ${n} » créé.`)}>
         <ChoixRecherche libelle="Dossier du nouveau projet" vide="À trier" valeur={dossierNouveau} changer={setDossierNouveau} options={optsDossiers} /></Ajout>}>
       <div className="ox-rg-table" role="table" aria-label="Projets">
@@ -97,8 +109,12 @@ export function OngletProjets() {
               <span className="ox-rg-n">{n} tâche{n > 1 ? "s" : ""}</span>
               {cal ? <span className="ox-rg-refus">géré par la synchronisation</span>
                 : n ? (reaffecter?.id === p.id
-                  ? <span className="ox-rg-conf"><ChoixRecherche libelle="Réaffecter les tâches à" vide="Réaffecter à…" valeur={reaffecter.vers} changer={(v) => setReaffecter({ id: p.id, vers: v })} options={autres(p.id)} />
-                    <button type="button" className="hx-btn is-sm ox-rg-danger" disabled={!reaffecter.vers} onClick={() => void supprimerAvecReaffectation(p, reaffecter.vers)}>Réaffecter et supprimer</button><button type="button" className="hx-more" onClick={() => setReaffecter(null)}>Annuler</button></span>
+                  ? (reaffecter.tout
+                    ? <span className="ox-rg-conf"><span className="ox-rg-refus">{(() => { const k = d.taches.filter((t) => t.projectId === p.id).length; return `Supprimer ${k} tâche${k > 1 ? "s" : ""} active${k > 1 ? "s" : ""} avec le projet ?`; })()}</span>
+                      <button type="button" className="hx-btn is-sm ox-rg-danger" onClick={() => void supprimerAvecTaches(p)}>Confirmer la suppression</button><button type="button" className="hx-more" onClick={() => setReaffecter({ id: p.id, vers: "" })}>Retour</button></span>
+                    : <span className="ox-rg-conf"><ChoixRecherche libelle="Réaffecter les tâches à" vide="Réaffecter à…" valeur={reaffecter.vers} changer={(v) => setReaffecter({ id: p.id, vers: v })} options={autres(p.id)} />
+                      <button type="button" className="hx-btn is-sm ox-rg-danger" disabled={!reaffecter.vers} onClick={() => void supprimerAvecReaffectation(p, reaffecter.vers)}>Réaffecter et supprimer</button>
+                      <button type="button" className="hx-more" onClick={() => setReaffecter({ id: p.id, vers: "", tout: true })}>…ou supprimer les tâches</button><button type="button" className="hx-more" onClick={() => setReaffecter(null)}>Annuler</button></span>)
                   : <button type="button" className="hx-more is-plain" onClick={() => setReaffecter({ id: p.id, vers: "" })}>Supprimer…</button>)
                 : <Supprimer libelle={p.name || p.id} onConfirmer={() => void ecrire("projets", (v) => retirerElement(v, p.id), `Projet « ${p.name} » supprimé.`)} />}
               <button type="button" className="hx-more is-plain" aria-expanded={plus === p.id} onClick={() => setPlus(plus === p.id ? null : p.id)}>{plus === p.id ? "Moins ▴" : "Plus ▾"}</button>
@@ -108,10 +124,10 @@ export function OngletProjets() {
               <label>Icône <input key={p.icon || ""} className="ox-rg-t is-court" maxLength={4} defaultValue={p.icon || ""} onBlur={(e) => { const v = e.target.value.trim(); if (v !== (p.icon || "")) void majP(p.id, { icon: v || undefined }); }} aria-label={`Icône de ${p.name}`} /></label>
               <div><b>Statuts proposés</b> <small className="hx-dim">les statuts protégés et ceux du projet restent toujours actifs</small>
                 <div className="ox-rg-puces">{d.statuts.filter((s) => !s.projectId || s.projectId === p.id).map((s) => { const verrou = statutProtege(s) || s.projectId === p.id, off = (p.disabledStatusIds || []).includes(s.id);
-                  return <label key={s.id} className={verrou ? "is-off" : ""}><input type="checkbox" checked={!off} disabled={verrou} onChange={() => void majP(p.id, { disabledStatusIds: off ? (p.disabledStatusIds || []).filter((x) => x !== s.id) : [...(p.disabledStatusIds || []), s.id] })} /><i style={{ background: s.color }} />{s.name}</label>; })}</div></div>
+                  return <label key={s.id} className={verrou ? "is-off" : ""}><input type="checkbox" checked={!off} disabled={verrou} onChange={() => void majP(p.id, { disabledStatusIds: off ? (p.disabledStatusIds || []).filter((x) => x !== s.id) : [...(p.disabledStatusIds || []), s.id] })} /><i style={{ background: s.color }} />{s.name}{off && utilisesMasques(p, "statusId", s.id) > 0 && <small className="ox-rg-alerte" title="Ces tâches gardent ce statut, mais il n'est plus proposé dans ce projet.">· encore utilisé par {utilisesMasques(p, "statusId", s.id)}</small>}</label>; })}</div></div>
               <div><b>Types proposés</b> <small className="hx-dim">les types verrouillés et ceux du projet restent toujours actifs</small>
                 <div className="ox-rg-puces">{d.types.filter((t) => !t.projectId || t.projectId === p.id).map((t) => { const verrou = !!t.locked || t.projectId === p.id, off = (p.disabledTaskTypeIds || []).includes(t.id);
-                  return <label key={t.id} className={verrou ? "is-off" : ""}><input type="checkbox" checked={!off} disabled={verrou} onChange={() => void majP(p.id, { disabledTaskTypeIds: off ? (p.disabledTaskTypeIds || []).filter((x) => x !== t.id) : [...(p.disabledTaskTypeIds || []), t.id] })} /><i style={{ background: t.color }} />{t.name}</label>; })}</div></div>
+                  return <label key={t.id} className={verrou ? "is-off" : ""}><input type="checkbox" checked={!off} disabled={verrou} onChange={() => void majP(p.id, { disabledTaskTypeIds: off ? (p.disabledTaskTypeIds || []).filter((x) => x !== t.id) : [...(p.disabledTaskTypeIds || []), t.id] })} /><i style={{ background: t.color }} />{t.name}{off && utilisesMasques(p, "taskTypeId", t.id) > 0 && <small className="ox-rg-alerte" title="Ces tâches gardent ce type, mais il n'est plus proposé dans ce projet.">· encore utilisé par {utilisesMasques(p, "taskTypeId", t.id)}</small>}</label>; })}</div></div>
             </div>}
           </div>;
         })}

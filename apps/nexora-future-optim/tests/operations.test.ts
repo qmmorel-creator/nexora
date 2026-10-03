@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archiver, basculerTerminee, creerTache, dupliquer, horodater, modifierTache, normaliserHeures, recalerDependances, restaurer, statutSuivant, RefusOperation } from "../src/donnees/operations";
+import { appliquerDefauts, archiver, basculerTerminee, creerTache, dupliquer, horodater, modifierTache, normaliserHeures, recalerDependances, restaurer, statutSuivant, RefusOperation } from "../src/donnees/operations";
 import type { Tache } from "../src/donnees/modele";
 import { CAT } from "./fixtures";
 
@@ -97,5 +97,25 @@ describe("statut suivant, archive, duplication", () => {
   it("duplique en « (copie) », statut par défaut, sans référence ni source", () => {
     const { tache } = dupliquer([{ ...base[0], source: "gmail", comparison: { enabled: true } }], "a", CAT);
     expect(tache).toMatchObject({ title: "FOR-0129 (copie)", statusId: "s1", progress: 0, comparison: null, source: null });
+  });
+});
+
+describe("appliquerDefauts (valeurs par défaut et modèles, part-001:11713)", () => {
+  const defauts = { projectId: "p1", statusId: "s3", assignee: "Vincent B.", criticality: "moyen", milestone: "task" };
+  it("complète ce que la saisie ne fixe pas, sans écraser la saisie", () => {
+    const r = appliquerDefauts({ title: "A", projectId: "p2" }, defauts, CAT);
+    expect(r).toMatchObject({ projectId: "p2", statusId: "s3", assignee: "Vincent B.", criticality: "moyen", milestone: false });
+  });
+  it("le modèle passe avant les valeurs par défaut", () => {
+    const r = appliquerDefauts({ title: "A" }, defauts, CAT, { taskTypeId: "tt3", assignee: "Quentin Morel", milestone: "milestone" });
+    expect(r).toMatchObject({ projectId: "p1", taskTypeId: "tt3", assignee: "Quentin Morel", milestone: true });
+  });
+  it("ignore un identifiant disparu et une criticité inconnue", () => {
+    const r = appliquerDefauts({ title: "A" }, { projectId: "efface", taskTypeId: "tt9", criticality: "énorme" }, CAT);
+    expect(r.projectId).toBeUndefined(); expect(r.taskTypeId).toBeUndefined(); expect(r.criticality).toBeUndefined();
+  });
+  it("creerTache respecte le statut issu des valeurs par défaut", () => {
+    const { tache } = creerTache([], appliquerDefauts({ title: "A" }, defauts, CAT), CAT, "2026-10-03", "x");
+    expect(tache).toMatchObject({ projectId: "p1", statusId: "s3", assignee: "Vincent B." });
   });
 });
