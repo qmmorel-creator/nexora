@@ -264,6 +264,9 @@ export const PATH_RULES = [
   // Nexora Futur (#652) : app distincte, couverte par ses propres tests
   // (`npm test --prefix apps/nexora-futur`), hors du banc de l'interface actuelle.
   [/^apps\/nexora-futur\//, null],
+  // Nexora Future Optim (#687) : app distincte, couverte par ses propres tests
+  // (`npm test --prefix apps/nexora-future-optim`).
+  [/^apps\/nexora-future-optim\//, null],
   [/^tools\/visual-check\/(affected|scope)(\.test)?\.mjs$/, { scenarios: [], tests: ["selection"] }],
   [/^tools\/visual-check\/carte-engine\.test\.mjs$/, { scenarios: [], tests: ["carte-engine"] }],
   [/^tools\/visual-check\/(premium|impact)-fixture\.mjs$/, { scenarios: ["2d"] }],
