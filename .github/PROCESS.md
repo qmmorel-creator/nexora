@@ -22,6 +22,8 @@ aucune fermeture sans validation explicite.
   - `statut:en-cours` — en cours de développement
   - `statut:à-tester` — déployé, en attente de validation par Quentin
   - `statut:fait` — validé et terminé
+  - `statut:standby` — en pause : ni abandonnée ni planifiée ; reprise sur décision de
+    Quentin (retour en `statut:backlog` ou `statut:en-cours`)
 - Un label `zone:*` indique le module concerné :
 
 | Zone du formulaire | Label | Périmètre |
