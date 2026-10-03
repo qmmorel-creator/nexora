@@ -264,3 +264,18 @@ export function colonnesHoraires<T extends { debut: number; fin: number }>(l: T[
   clore();
   return out;
 }
+
+// Bulles (part-003:2294, disposition « lanes ») : les bulles d'un groupe se
+// rangent côte à côte et ne descendent d'une ligne que si elles se chevauchent
+// réellement, largeur minimale comprise (en jours, déduite de la fenêtre).
+export function couloirs(lignes: LigneFrise[], largeurMinJours: number): LigneFrise[][] {
+  const tries = [...lignes].sort((a, b) => a.debut.localeCompare(b.debut) || a.fin.localeCompare(b.fin));
+  const fins: string[] = []; const out: LigneFrise[][] = [];
+  tries.forEach((l) => {
+    const finOccupee = ajouterJours(l.debut, Math.max(ecartJours(l.debut, l.fin) + 1, largeurMinJours));
+    let k = fins.findIndex((f) => f <= l.debut);
+    if (k < 0) { k = fins.length; out.push([]); }
+    fins[k] = finOccupee; out[k].push(l);
+  });
+  return out;
+}

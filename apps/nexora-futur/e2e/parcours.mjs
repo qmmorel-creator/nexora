@@ -242,7 +242,7 @@ try {
   await gantt.getByRole("button", { name: /^Newsletter d'octobre, .*écart de fin \+5 j/ }).waitFor();
   await page.getByLabel("Chemin critique").check();
   await gantt.getByRole("button", { name: /^Congés scolaires .*chemin critique/ }).waitFor();
-  assert.deepEqual((await valeur("nexora:futurPrefs")).frise, { reference: "initiale", critique: true }, "réglages de la frise synchronisés");
+  assert.deepEqual((await valeur("nexora:futurPrefs")).frise, { reference: "initiale", critique: true, style: "barres" }, "réglages de la frise synchronisés");
   await capture("12-gantt-reference");
 
   etape = "figer la référence"; console.log("→", etape);
@@ -286,6 +286,47 @@ try {
   await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:tasks").find((x) => x.id === "t10").title === "Newsletter d'octobre (v2)");
   await capture("14-tableur");
   await page.keyboard.press("Escape");
+
+  etape = "frise : bulles et métro"; console.log("→", etape);
+  await page.keyboard.press("4");
+  await page.getByRole("radio", { name: "Bulles" }).click();
+  await page.locator(".fr-bulle-t", { hasText: "Revue DOE" }).waitFor();
+  await page.getByRole("radio", { name: "Métro" }).click();
+  await page.getByRole("button", { name: /^Visite DREAL, station le / }).waitFor();
+  assert.equal((await valeur("nexora:futurPrefs")).frise.style, "metro");
+  await capture("15-metro");
+  await page.getByRole("radio", { name: "Barres" }).click();
+
+  etape = "densité : mois, croisée, pixels"; console.log("→", etape);
+  await page.keyboard.press("7");
+  const finRevue = (await tache("t4")).end;
+  await page.getByRole("button", { name: new RegExp(`^${finRevue} : \\d+ tâche`) }).click();
+  await page.getByRole("complementary", { name: /^Échéances du / }).getByText("Revue DOE").waitFor();
+  await page.getByRole("radio", { name: "Croisée" }).click();
+  await page.getByRole("button", { name: /^CTEX6 × À planifier : 2$/ }).click();
+  await page.getByRole("complementary", { name: "CTEX6 × À planifier" }).getByText("PV Contrôles DREAL").waitFor();
+  await page.getByRole("radio", { name: "Pixels" }).click();
+  await page.getByRole("table", { name: "Pixel Tasks" }).waitFor();
+  assert.ok(await page.getByRole("button", { name: /, en retard$/ }).count() > 0, "pixels en retard");
+  await capture("16-densite");
+
+  etape = "synthèse : indicateurs, graphique, treemap, notes"; console.log("→", etape);
+  await page.keyboard.press("8");
+  const kpi = page.getByRole("region", { name: "Indicateurs" });
+  await kpi.waitFor();
+  assert.match(await kpi.textContent(), /Jalons2/);
+  await page.getByLabel("Style du graphique").selectOption("pie");
+  await page.getByRole("img", { name: /^Camembert : / }).waitFor();
+  await page.getByLabel("Style du graphique").selectOption("completedPerWeek");
+  await page.getByRole("img", { name: /^Terminées par semaine/ }).waitFor();
+  // Les terminées comptent même quand la requête les masque (Réunion Expert, close il y a 9 jours).
+  assert.ok(await page.locator(".sy-svg rect title", { hasText: /: 1$/ }).count() >= 1, "une semaine avec une tâche terminée");
+  const notes = page.getByRole("region", { name: "Notes des tableaux de bord" });
+  await notes.getByText("Consignes de la semaine").waitFor();
+  assert.equal(await notes.getByRole("link", { name: "le plan" }).getAttribute("href"), "https://example.invalid/plan");
+  await capture("17-synthese");
+  await page.getByRole("listitem", { name: /^CTEX6 : / }).click();
+  await page.waitForFunction(() => location.pathname === "/projets/p-ctex6");
 
   etape = "mode sombre"; console.log("→", etape);
   await page.goto(`http://127.0.0.1:${PORT}/projets/p-ctex6?t=t2`);

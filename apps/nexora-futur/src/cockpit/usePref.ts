@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useDonnees } from "../donnees/magasin";
 import { fusionnerPrefs, type PrefsFutur } from "../donnees/prefs";
 
-type Cle = "frise" | "tableur";
+type Cle = "frise" | "tableur" | "densite" | "synthese";
 export function usePref<K extends Cle>(cle: K): [PrefsFutur[K], (v: PrefsFutur[K]) => void] {
   const { d, ecrireJson } = useDonnees();
   const [local, setLocal] = useState<PrefsFutur[K] | undefined>(undefined);
