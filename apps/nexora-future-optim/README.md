@@ -34,7 +34,8 @@ Différences avec Futur :
 - **Écriture** : seules les clés de `CLES_ECRITURE_OUVERTES` (`src/donnees/config.ts`) sont modifiables :
   - `nexora:tasks` et `nexora:taskArchive` ;
   - `nexora:activityLog`, `nexora:habitLog` et `nexora:habitSkips` ;
-  - `nexora:optimPrefs`.
+  - `nexora:optimPrefs` ;
+  - les catalogues de configuration partagés avec Nexora (Réglages, retour du 03/10/2026) : `nexora:projects`, `nexora:projectFolders`, `nexora:statuses`, `nexora:taskTypes`, `nexora:taskDefaults`, `nexora:taskTemplates`, `nexora:habitThemes`, `nexora:teamMembers`, `nexora:teams`, `nexora:sportGoals`. Chaque élément modifié reçoit `updatedAt` (`src/donnees/reglages.ts`) : Nexora fusionne ces clés élément par élément. Exception : `nexora:taskDefaults` n'est pas fusionnable côté Nexora (une écriture concurrente y affiche un bandeau de conflit, sans écrasement silencieux).
 
   Toute écriture Firestore passe par `src/donnees/ecriture-firebase.ts`. `tests/lecture-seule.test.ts` refuse toute autre fonction d'écriture.
 - **Démonstration** : `scripts/verifier-paquet.mjs` fait échouer le build de production s'il contient du code ou des données de démonstration.

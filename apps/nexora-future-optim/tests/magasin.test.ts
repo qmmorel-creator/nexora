@@ -29,7 +29,7 @@ describe("appliquerMutation", () => {
   });
   it("refuse d'écrire une clé non ouverte (garde)", async () => {
     const src = sourceMemoire({});
-    await expect(src.modifier("nexora:projects", (t) => t)).rejects.toThrow(/lecture seule/);
+    await expect(src.modifier("nexora:quotes", (t) => t)).rejects.toThrow(/lecture seule/);
   });
 });
 

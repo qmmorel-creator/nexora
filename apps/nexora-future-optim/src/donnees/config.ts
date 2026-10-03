@@ -17,7 +17,13 @@ export const FIREBASE_CONFIG = {
 // besoin. Lot 2 (#655, décision du 03/10/2026) : tâches et archive.
 // #669 (décision du 03/10/2026) : journal d'activité, journal des habitudes,
 // « non applicable », et la clé propre à Futur nexora:optimPrefs.
+// Retour de Quentin du 03/10/2026 (« reprendre l'intégralité des réglages de
+// Nexora », sevrage #721 étape 5) : catalogues de configuration, écrits élément
+// par élément avec un horodatage updatedAt (fusion élément par élément côté Nexora).
 export const CLES_ECRITURE_OUVERTES: readonly string[] = [
   "nexora:tasks", "nexora:taskArchive",
   "nexora:activityLog", "nexora:habitLog", "nexora:habitSkips", "nexora:optimPrefs",
+  "nexora:projects", "nexora:projectFolders", "nexora:statuses", "nexora:taskTypes",
+  "nexora:taskDefaults", "nexora:taskTemplates", "nexora:habitThemes",
+  "nexora:teamMembers", "nexora:teams", "nexora:sportGoals",
 ];
