@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { connexionEmail, connexionGoogle } from "../donnees/firebase";
+import { Bouton, Champ, Etat, Surtitre } from "../composants";
 
 const messageErreur = (e: unknown) => {
   const code = (e as { code?: string })?.code || "";
@@ -26,17 +27,20 @@ export function Connexion() {
   };
 
   return (
-    <main className="centre">
-      <form className="carte connexion" onSubmit={soumettre}>
-        <h1>Nexora Futur</h1>
-        <p className="discret">Même compte que Nexora. Lecture seule pendant le développement.</p>
-        <label htmlFor="email">E-mail</label>
-        <input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        <label htmlFor="mdp">Mot de passe</label>
-        <input id="mdp" type="password" autoComplete="current-password" value={motDePasse} onChange={(e) => setMotDePasse(e.target.value)} required />
-        {erreur && <p className="erreur" role="alert">{erreur}</p>}
-        <button type="submit" className="principal" disabled={enCours}>{enCours ? "Connexion…" : "Se connecter"}</button>
-        <button type="button" onClick={google}>Continuer avec Google</button>
+    <main className="centre quadrillage">
+      <form className="panneau connexion" onSubmit={soumettre}>
+        <div className="connexion-cartouche">
+          <Surtitre>Nexora · plan de travail</Surtitre>
+          <h1>Nexora Futur</h1>
+          <Etat ton="info">Lecture seule pendant le développement</Etat>
+        </div>
+        <div className="connexion-corps">
+          <Champ libelle="E-mail" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <Champ libelle="Mot de passe" type="password" autoComplete="current-password" value={motDePasse} onChange={(e) => setMotDePasse(e.target.value)} required erreur={erreur || undefined} />
+          <Bouton type="submit" variante="principal" disabled={enCours}>{enCours ? "Connexion…" : "Se connecter"}</Bouton>
+          <Bouton onClick={google}>Continuer avec Google</Bouton>
+        </div>
+        <div className="connexion-pied mono">Même compte que Nexora · nexora-cb20d</div>
       </form>
     </main>
   );
