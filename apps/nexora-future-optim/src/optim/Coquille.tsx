@@ -19,8 +19,9 @@ import { Argent } from "./Argent";
 import { Reglages } from "./Reglages";
 import { GardeEcran } from "./Garde";
 import { compterTriage, Triage } from "./Triage";
+import { Phrase } from "./Phrase";
 
-const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["triage", "Triage"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"]];
+const NAV: [string, string][] = [["", "Accueil"], ["journee", "Journée"], ["triage", "Triage"], ["phrase", "Phrase"], ["planning", "Planning"], ["projets", "Projets"], ["corps", "Corps"], ["argent", "Argent"]];
 
 function Fiche() {
   const { d, projet, statut, fini, retard, joursRetard, executer, jour } = useOptim();
@@ -128,6 +129,7 @@ function Interface({ email, demo }: { email: string; demo?: boolean }) {
   else if (ecran === "corps") contenu = <Corps />;
   else if (ecran === "argent") contenu = <Argent />;
   else if (ecran === "triage") contenu = <Triage />;
+  else if (ecran === "phrase") contenu = <Phrase />;
   else contenu = <Accueil aller={aller} />;
   return (
     <div id="hx-app" className="ox-app">

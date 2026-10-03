@@ -1,4 +1,5 @@
 import { REGLES_DEFAUT, nettoyerReports, normaliserRegles, type ReglesTriage } from "./triage";
+import { PHRASE_VIDE, normaliserPhrase, type PrefsPhrase } from "./phrase";
 
 // Préférences propres à Nexora Future Optim (Ref #687), clé nexora:optimPrefs.
 // Décision de Quentin (03/10/2026) : synchronisées entre appareils, dans une
@@ -81,6 +82,7 @@ export interface PrefsOptim {
   argent: PrefsArgent;
   journee: PrefsJournee;
   triage: PrefsTriage;
+  phrase: PrefsPhrase; // Phrase (#708) : vues et tuiles, séparées des vues de Planning et Projets
   vues: VueEnregistree[];
 }
 
@@ -94,6 +96,7 @@ export const PREFS_VIDES: PrefsOptim = {
   argent: { onglet: "mois", patrimoineMois: 24, periode: "mois" },
   journee: JOURNEE_DEFAUT,
   triage: TRIAGE_DEFAUT,
+  phrase: PHRASE_VIDE,
   vues: [],
 };
 // Compatibilité : nom attendu par le magasin de données.
@@ -168,6 +171,7 @@ export function normaliserPrefs(v: unknown): PrefsOptim {
     argent: (() => { const a = objet(b.argent); return { onglet: parmi(a.onglet, ONGLETS_ARGENT, "mois"), patrimoineMois: (DUREES_PATRIMOINE as readonly number[]).includes(a.patrimoineMois as number) ? (a.patrimoineMois as number) : 24, periode: parmi(a.periode, CHOIX_PERIODE_ARGENT, "mois") }; })(),
     journee: (() => { const j = objet(b.journee); return { onglet: j.onglet === "pro" ? "pro" : "perso", pixelPerso: j.pixelPerso && typeof j.pixelPerso === "object" && !Array.isArray(j.pixelPerso) ? (j.pixelPerso as Record<string, unknown>) : JOURNEE_DEFAUT.pixelPerso, pixelPro: objet(j.pixelPro) } as PrefsJournee; })(),
     triage: (() => { const x = objet(b.triage); return { regles: normaliserRegles(x.regles), reports: nettoyerReports(x.reports, "0000-00-00") }; })(),
+    phrase: normaliserPhrase(b.phrase),
     vues: (Array.isArray(b.vues) ? b.vues : []).map(normaliserVue).filter((x): x is VueEnregistree => !!x).slice(0, MAX_VUES),
   };
 }
