@@ -11,6 +11,7 @@ import "./cockpit/vues.css";
 import "./cockpit/corps.css";
 import "./cockpit/triage.css";
 import "./cockpit/atlas.css";
+import "./cockpit/phrase.css";
 
 // Jetons et préférences appliqués avant le premier rendu (pas de flash de thème).
 const style = document.createElement("style");

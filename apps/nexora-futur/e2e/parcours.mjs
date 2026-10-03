@@ -326,6 +326,45 @@ try {
   assert.ok(Number((await page.locator("[data-m=noeuds]").textContent()).match(/\d+/)[0]) < 8000, "niveau de détail : moins de 8 000 éléments pour 300 projets");
   await page.getByRole("button", { name: "Mes données" }).click();
 
+  etape = "phrase : mots, vues enregistrées, tuiles"; console.log("→", etape);
+  await page.goto(`http://127.0.0.1:${PORT}/phrase`);
+  const chiffre = page.locator(".ph-chiffre b");
+  await page.getByRole("button", { name: /^les tâches, changer/ }).click();
+  await page.getByRole("option", { name: "mes dépenses" }).click();
+  await page.waitForFunction(() => /€$/.test(document.querySelector(".ph-chiffre b")?.textContent || ""));
+  await page.locator("body").press("s");
+  const nom = page.getByLabel("Nom de la vue");
+  await nom.fill("Budget du mois"); await nom.press("Enter");
+  await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:futurPrefs")?.phrase?.vues?.length === 1);
+  const vue = (await prefs()).phrase.vues[0];
+  assert.deepEqual([vue.nom, vue.ph.quoi, vue.ph.per], ["Budget du mois", "depenses", "mois"]);
+  assert.match(page.url(), /\/phrase/);
+  await page.locator("body").press("e");
+  await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:futurPrefs")?.phrase?.tuiles?.length === 1);
+  // Un mot changé au clavier : la vue est « modifiée », puis mise à jour.
+  await page.getByRole("button", { name: /^ce mois, changer/ }).focus();
+  await page.keyboard.press("ArrowDown");
+  await page.getByRole("button", { name: /^le mois dernier, changer/ }).waitFor();
+  await page.getByText("modifiée", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Mettre à jour « Budget du mois »" }).click();
+  await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:futurPrefs")?.phrase?.vues?.[0]?.ph?.per === "dernier");
+  await capture("10g-phrase");
+  // La tuile ramène la phrase épinglée ; la palette ouvre la vue.
+  await page.getByRole("button", { name: /^Tuile : mes dépenses en toutes catégories sur ce mois/ }).click();
+  await page.getByRole("button", { name: /^ce mois, changer/ }).waitFor();
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("Vue : Budget");
+  await page.getByRole("dialog").getByText("Vue : Budget du mois", { exact: true }).click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("vue")?.startsWith("v"));
+  await page.getByRole("button", { name: /^le mois dernier, changer/ }).waitFor();
+  // Renommer puis supprimer.
+  await page.getByRole("button", { name: "Renommer la vue Budget du mois" }).click();
+  const renom = page.getByLabel("Nouveau nom"); await renom.fill("Budget précédent"); await renom.press("Enter");
+  await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:futurPrefs")?.phrase?.vues?.[0]?.nom === "Budget précédent");
+  await page.getByRole("button", { name: "Supprimer la vue Budget précédent" }).click();
+  await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:futurPrefs")?.phrase?.vues?.length === 0);
+  assert.ok(await chiffre.textContent());
+
   etape = "frise : glisser, référence, chemin critique"; console.log("→", etape);
   const J = (n) => page.evaluate((k) => { const [a, m, d] = new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()).split("-").map(Number); return new Date(Date.UTC(a, m - 1, d + k)).toISOString().slice(0, 10); }, n);
   const tache = async (id) => (await taches()).find((t) => t.id === id);
