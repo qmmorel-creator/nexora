@@ -5,6 +5,6 @@ import react from "@vitejs/plugin-react";
 // localement. Aucune transpilation dans le navigateur, aucun CDN de code.
 export default defineConfig({
   plugins: [react()],
-  build: { outDir: "dist", sourcemap: "hidden", target: "es2022" },
+  build: { outDir: "dist", sourcemap: false, target: "es2022" },
   server: { host: "127.0.0.1", port: 5173 },
 });

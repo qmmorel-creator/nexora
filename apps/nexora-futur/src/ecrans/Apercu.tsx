@@ -3,12 +3,14 @@ import type { User } from "firebase/auth";
 import { deconnexion, ecouterCle, type LectureCle } from "../donnees/firebase";
 import { analyserJson } from "../donnees/segments";
 import { aujourdhuiParis, estEnRetard, estTerminee, type Projet, type Statut, type Tache } from "../donnees/modele";
+import { Bouton, Cartouche, Etat, Surtitre } from "../composants";
+import { ReglagesApparence } from "../composants/ReglagesApparence";
 
-type Etat = { lecture: LectureCle | null; erreur: string | null; charge: boolean };
-const VIDE: Etat = { lecture: null, erreur: null, charge: false };
+type Lecture = { lecture: LectureCle | null; erreur: string | null; charge: boolean };
+const VIDE: Lecture = { lecture: null, erreur: null, charge: false };
 
-function useCle(cle: string): Etat {
-  const [etat, setEtat] = useState<Etat>(VIDE);
+function useCle(cle: string): Lecture {
+  const [etat, setEtat] = useState<Lecture>(VIDE);
   useEffect(() => ecouterCle(cle, (lecture) => setEtat({ lecture, erreur: null, charge: true }), (e) => setEtat((x) => ({ ...x, erreur: e.message, charge: true }))), [cle]);
   return etat;
 }
@@ -31,38 +33,41 @@ export function Apercu({ utilisateur }: { utilisateur: User }) {
   return (
     <div className="page">
       <header className="entete">
-        <strong>Nexora Futur</strong>
-        <span className="pastille">Lecture seule</span>
-        <span className="discret marge-auto">{utilisateur.email}</span>
-        <button onClick={() => deconnexion()}>Se déconnecter</button>
+        <span className="logo" aria-hidden="true">N</span>
+        <strong className="entete-titre">Nexora Futur</strong>
+        <Etat ton="info">Lecture seule</Etat>
+        <span className="marge-auto" />
+        <ReglagesApparence />
+        <span className="discret mono">{utilisateur.email}</span>
+        <Bouton variante="discret" onClick={() => deconnexion()}>Se déconnecter</Bouton>
       </header>
-      <main className="contenu">
-        <h1>Lot 0 · accès aux données</h1>
-        <p className="discret">Cet écran prouve que Nexora Futur lit tes données réelles en direct, sans pouvoir les modifier. L'interface définitive arrive avec les lots suivants (#652).</p>
-        {erreurs.length > 0 && <div className="erreur" role="alert">{erreurs.join(" · ")}</div>}
-        {!charge ? <p className="discret">Lecture de Firebase…</p> : (
-          <>
-            <div className="chiffres">
-              <div className="carte"><b>{projets.length}</b><span>projets</span></div>
-              <div className="carte"><b>{taches.length}</b><span>tâches</span></div>
-              <div className="carte"><b>{ouvertes.length}</b><span>ouvertes</span></div>
-              <div className="carte"><b className="alerte">{retards.length}</b><span>en retard</span></div>
-            </div>
-            <h2>Projets</h2>
-            <ul className="projets">
-              {projets.map((pr) => {
-                const siennes = ouvertes.filter((x) => x.projectId === pr.id);
-                return (
-                  <li key={pr.id}><span className="point" style={{ background: pr.color || "#888" }} />{pr.name || "Sans nom"}<span className="discret marge-auto">{siennes.length} ouvertes</span></li>
-                );
-              })}
-            </ul>
-          </>
-        )}
+      <main className="contenu quadrillage">
+        <div className="feuille">
+          <Cartouche surtitre="Lot 1 · identité Plan" titre="Accès aux données"
+            meta={<><span>Firebase nexora-cb20d</span><span>Lecture seule</span><span>Temps réel</span></>} />
+          <p className="discret">Cet écran prouve que Nexora Futur lit tes données réelles sans pouvoir les modifier. Le Cockpit arrive au lot 2 (#655).</p>
+          {erreurs.length > 0 && <p role="alert"><Etat ton="crit">{erreurs.join(" · ")}</Etat></p>}
+          {!charge ? <p className="surtitre">Lecture de Firebase…</p> : (
+            <>
+              <div className="chiffres">
+                <div className="panneau chiffre"><Surtitre>Projets</Surtitre><b>{projets.length}</b></div>
+                <div className="panneau chiffre"><Surtitre>Tâches</Surtitre><b>{taches.length}</b></div>
+                <div className="panneau chiffre"><Surtitre>Ouvertes</Surtitre><b>{ouvertes.length}</b></div>
+                <div className="panneau chiffre"><Surtitre>En retard</Surtitre><b className="crit">{retards.length}</b></div>
+              </div>
+              <Surtitre>Projets · tâches ouvertes</Surtitre>
+              <ul className="projets panneau">
+                {projets.map((pr) => (
+                  <li key={pr.id}><span className="point" style={{ background: pr.color || "var(--encre3)" }} />{pr.name || "Sans nom"}<span className="mono discret marge-auto">{ouvertes.filter((x) => x.projectId === pr.id).length}</span></li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
       </main>
-      <footer className="etat" aria-live="polite">
-        <span>Tâches : révision {t.lecture?.revision?.slice(0, 8) || "—"} · mise à jour {heure(t.lecture?.misAJour)}</span>
-        <span className="marge-auto">Synchronisation temps réel · aucune écriture possible</span>
+      <footer className="etat-barre mono" aria-live="polite">
+        <span>Tâches · révision {t.lecture?.revision?.slice(0, 8) || "—"} · {heure(t.lecture?.misAJour)}</span>
+        <span className="marge-auto">Synchronisé en temps réel · aucune écriture possible</span>
       </footer>
     </div>
   );
