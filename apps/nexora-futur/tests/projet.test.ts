@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { normaliserThemes } from "../src/donnees/habitudes";
 import { budgetProjet, chargeParPersonne, documentsProjet, friseProjet, grilleHabitudes, journalProjet, prochainesEtapes, reunionsProjet, risquesProjet, santeProjet } from "../src/donnees/projet";
 import type { Tache } from "../src/donnees/modele";
 import { CAT } from "./fixtures";
@@ -55,11 +56,12 @@ describe("espaces", () => {
     expect(c.map((x) => [x.nom, x.ouvertes, x.retards, x.semaine])).toEqual([["Vincent B.", 3, 1, 2], ["Quentin Morel", 1, 0, 1]]);
   });
   it("grille d'habitudes : 12 semaines du lundi, futur marqué", () => {
-    const g = grilleHabitudes([{ id: "t", name: "x", habits: [{ id: "h1", name: "a" }, { id: "h2", name: "b" }] }], [{ habitId: "h1", date: J }], J);
+    const themes = normaliserThemes([{ id: "t", name: "x", selectionMode: "multi", habits: [{ id: "h1", name: "a" }, { id: "h2", name: "b" }, { id: "h3", name: "c" }] }]);
+    const g = grilleHabitudes(themes, [{ habitId: "h1", date: J }], [{ habitId: "h3", date: J }], J);
     expect(g.length).toBe(12);
     const derniere = g[11];
     expect(derniere[0].jour).toBe("2026-09-28");
-    expect(derniere[5]).toMatchObject({ jour: J, part: 0.5, futur: false });
+    expect(derniere[5]).toMatchObject({ jour: J, part: 0.5, nb: 1, total: 2, futur: false }); // h3 non applicable
     expect(derniere[6].futur).toBe(true);
   });
 });

@@ -32,3 +32,25 @@ describe("appliquerMutation", () => {
     await expect(src.modifier("nexora:projects", (t) => t)).rejects.toThrow(/lecture seule/);
   });
 });
+
+describe("journal écrit par appliquerMutation (#669)", () => {
+  it("une modification journalisée ; un champ sans suivi n'écrit rien", async () => {
+    const src = sourceMemoire({ [CLES.taches]: T, [CLES.archive]: [] });
+    await lancer(src, modifier("a", { statusId: "s5" }));
+    expect((src.valeur(CLES.journal) as { type: string; taskId: string; at: string }[]).map((e) => [e.type, e.taskId, e.at])).toEqual([["completed", "a", "2026-10-03T10:00:00.000Z"]]);
+    await lancer(src, modifier("b", { title: "B2" }));
+    expect((src.valeur(CLES.journal) as unknown[]).length).toBe(1);
+  });
+  it("archiver journalise « deleted », comme Nexora actuel", async () => {
+    const src = sourceMemoire({ [CLES.taches]: T, [CLES.archive]: [], [CLES.journal]: [{ id: "old", type: "created", taskId: "z", at: "2026-01-01T00:00:00.000Z" }] });
+    await lancer(src, archiverTache("b"));
+    expect((src.valeur(CLES.journal) as { type: string; taskId: string }[]).map((e) => `${e.taskId}:${e.type}`)).toEqual(["b:deleted", "z:created"]);
+  });
+  it("un échec du journal est signalé sans annuler la modification", async () => {
+    const src = sourceMemoire({ [CLES.taches]: T, [CLES.archive]: [] });
+    const enPanne = { modifier: (cle: string, f: (t: string) => string) => (cle === CLES.journal ? Promise.reject(new Error("réseau")) : src.modifier(cle, f)) };
+    const r = await appliquerMutation(enPanne, modifier("a", { assignee: "Q" }), () => CAT, { taches: JSON.stringify(T), archive: "[]" });
+    expect(r.journal).toBe("réseau");
+    expect((src.valeur(CLES.taches) as Tache[])[0].assignee).toBe("Q");
+  });
+});

@@ -69,13 +69,3 @@ export function pointsAttention(taches: Tache[], jour: string, cat: Catalogues):
     .forEach((t) => p.push({ genre: "focus", t, texte: "en focus" }));
   return p;
 }
-
-export interface Habitude { id: string; name: string; color?: string; kind?: "check" | "numeric"; min?: number; max?: number; }
-export interface ThemeHabitudes { id: string; name: string; color?: string; habits?: Habitude[]; }
-export interface EntreeHabitude { habitId: string; date: string; value?: number; }
-export function habitudesDuJour(themes: ThemeHabitudes[], journal: EntreeHabitude[], jour: string) {
-  const du = new Map(journal.filter((e) => e.date === jour).map((e) => [e.habitId, e]));
-  return themes.filter((t) => t.habits?.length).map((t) => ({
-    theme: t, habitudes: (t.habits || []).map((h) => ({ h, fait: du.has(h.id), valeur: du.get(h.id)?.value })),
-  }));
-}

@@ -1,7 +1,9 @@
 // Page projet générée (Ref #657) : sections calculées depuis les données,
-// masquables et réordonnables (préférence d'affichage locale à l'appareil).
-import { useMemo, useState, type ReactNode } from "react";
-import type { Donnees } from "../donnees/magasin";
+// masquables et réordonnables. Préférence synchronisée dans nexora:futurPrefs
+// (Ref #669), avec repli sur l'ancienne préférence locale du lot 4.
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useDonnees, type Donnees } from "../donnees/magasin";
+import { fusionnerPrefs, type PrefsPageProjet } from "../donnees/prefs";
 import { ecartJours, estTerminee, type Projet, type Tache } from "../donnees/modele";
 import { budgetProjet, chargeParPersonne, documentsProjet, friseProjet, journalProjet, prochainesEtapes, reunionsProjet, risquesProjet, santeProjet } from "../donnees/projet";
 import { Bouton, Cartouche, Etat, Surtitre } from "../composants";
@@ -11,9 +13,16 @@ const SECTIONS = [["etapes", "Prochaines étapes"], ["frise", "Frise · 12 semai
   ["documents", "Documents"], ["equipe", "Équipe"], ["risques", "Risques de retard"], ["journal", "Journal du projet"]] as const;
 type Cle = (typeof SECTIONS)[number][0];
 const CLE_PREF = "nexora-futur:page-projet";
-const lirePref = (): { ordre: Cle[]; masquees: Cle[] } => {
+const CLES_SECTIONS = SECTIONS.map((s) => s[0]) as Cle[];
+const estCle = (x: string): x is Cle => (CLES_SECTIONS as string[]).includes(x);
+// Sections inconnues retirées, nouvelles sections ajoutées en fin d'ordre.
+const normaliser = (p: PrefsPageProjet | null | undefined): { ordre: Cle[]; masquees: Cle[] } => {
+  const ordre = (p?.ordre || []).filter(estCle);
+  return { ordre: [...ordre, ...CLES_SECTIONS.filter((c) => !ordre.includes(c))], masquees: (p?.masquees || []).filter(estCle) };
+};
+const lireAncienne = (): PrefsPageProjet | null => {
   try { const v = JSON.parse(localStorage.getItem(CLE_PREF) || "null"); if (v && Array.isArray(v.ordre)) return v; } catch { /* préférence absente */ }
-  return { ordre: SECTIONS.map((s) => s[0]), masquees: [] };
+  return null;
 };
 const euros = (n: number) => `${Math.round(n).toLocaleString("fr-FR")} €`;
 const court = (iso?: string) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : "—");
@@ -22,9 +31,17 @@ interface Props { d: Donnees; projet: Projet; selection?: string; onOuvrir: (id:
 
 export function PageProjet({ d, projet, selection, onOuvrir, onBasculer, lentilles }: Props) {
   const jour = d.aujourdhui; const id = projet.id;
-  const [pref, setPrefEtat] = useState(lirePref);
+  const { ecrireJson } = useDonnees();
+  // Affichage immédiat d'un réglage en cours d'enregistrement.
+  const [local, setLocal] = useState<PrefsPageProjet | null>(null);
+  const pref = normaliser(local ?? d.prefs.pageProjet ?? lireAncienne());
   const [reglage, setReglage] = useState(false);
-  const setPref = (p: typeof pref) => { setPrefEtat(p); try { localStorage.setItem(CLE_PREF, JSON.stringify(p)); } catch { /* préférence de session */ } };
+  const setPref = (p: { ordre: Cle[]; masquees: Cle[] }) => {
+    setLocal(p);
+    ecrireJson("prefs", (v) => fusionnerPrefs(v, { pageProjet: p })).catch((e) => console.warn("Préférence non enregistrée", e));
+  };
+  // L'affichage local cède la place à la valeur synchronisée dès qu'elle la rejoint.
+  useEffect(() => { if (local && JSON.stringify(normaliser(d.prefs.pageProjet)) === JSON.stringify(normaliser(local))) setLocal(null); }, [d.prefs.pageProjet, local]);
   const sante = useMemo(() => santeProjet(d.taches, id, d, jour), [d, id, jour]);
   const etapes = useMemo(() => prochainesEtapes(d.taches, id, d), [d, id]);
   const frise = useMemo(() => friseProjet(d.taches, id, d, jour), [d, id, jour]);

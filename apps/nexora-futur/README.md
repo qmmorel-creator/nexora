@@ -14,7 +14,8 @@ Nouvelle version de Nexora, publiée sur https://nexora-futur.netlify.app (issue
 ## Garde-fous
 
 - **Écriture** : seules les clés de `CLES_ECRITURE_OUVERTES` (`src/donnees/config.ts`) sont
-  modifiables, soit `nexora:tasks` et `nexora:taskArchive` depuis le lot 2 (#655). Toute
+  modifiables : `nexora:tasks` et `nexora:taskArchive` (lot 2, #655) ; `nexora:activityLog`,
+  `nexora:habitLog`, `nexora:habitSkips` et `nexora:futurPrefs` (#669). Toute
   écriture Firestore passe par `src/donnees/ecriture-firebase.ts`, avec le même protocole
   anti-conflit que nexora-project. `tests/lecture-seule.test.ts` refuse toute autre fonction
   d'écriture Firestore dans `src/`.
@@ -38,3 +39,15 @@ Nouvelle version de Nexora, publiée sur https://nexora-futur.netlify.app (issue
 
 L'adresse décrit la vue (`/projets/<id>?v=colonnes&retard=1&t=<tâche>`) : lien profond et
 bouton Précédent. Paramètres réservés : `t` (tâche ouverte) et `v` (lentille).
+
+## Journal, habitudes, préférences (#669)
+
+- **Journal d'activité** : chaque changement de tâche fait dans Futur est inscrit dans
+  `nexora:activityLog`, avec les mêmes entrées que Nexora actuel et le même plafond de 2 000.
+  Une entrée identique de moins de 5 minutes n'est pas ajoutée une seconde fois : Nexora actuel,
+  s'il est ouvert, journalise lui aussi les changements qu'il reçoit (pendant côté Nexora : #670).
+- **Habitudes** : coche, compteur −/+ et « non applicable », dans le Fil du jour et l'espace Corps
+  (n'importe quel jour des 12 dernières semaines). Les règles sont celles de Nexora actuel :
+  choix unique par thème, valeurs bornées, « non applicable » hors du total.
+- **Préférences** (`nexora:futurPrefs`, clé lue par Futur seul) : dernière adresse de chaque
+  espace, sections de la page projet. Synchronisées entre appareils.
