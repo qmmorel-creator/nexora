@@ -457,6 +457,26 @@ try {
   const csv = (await import("node:fs")).readFileSync(await tele.path(), "utf8");
   assert.ok(csv.startsWith("\ufeffid;titre;projet") && csv.includes("Demande lame pour piste d'accès"), "CSV des tâches");
 
+  etape = "raccourcis réglables"; console.log("→", etape);
+  await page.goto(`http://127.0.0.1:${PORT}/reglages?o=raccourcis`);
+  await page.getByLabel("Touche pour Terminer / rouvrir").press("t");
+  await page.waitForFunction(() => window.__nexoraDemo.valeur("nexora:futurPrefs")?.raccourcis?.terminer === "t");
+  // Navigation interne (sans recharger : la démo repartirait de zéro).
+  await page.getByRole("link", { name: /^Toutes les tâches/ }).click();
+  await page.getByRole("grid", { name: "Tâches" }).waitFor();
+  await page.keyboard.press("j");
+  const choisieR = await page.evaluate(() => document.querySelector(".ligne.sel")?.getAttribute("data-id"));
+  const origineR = (await taches()).find((t) => t.id === choisieR);
+  await page.keyboard.press("t");
+  await page.waitForFunction((id) => (window.__nexoraDemo.valeur("nexora:tasks") || []).find((x) => x.id === id)?.statusId === "s5", choisieR);
+  const finies = async () => (await taches()).filter((t) => t.statusId === "s5").length;
+  const avantE = await finies();
+  await page.keyboard.press("e"); // « e » n'est plus le raccourci de Terminer : rien ne change
+  await page.waitForTimeout(250);
+  assert.equal(await finies(), avantE, "E libéré");
+  // La tâche retrouve son état pour les étapes suivantes (comptes de Densité).
+  await page.evaluate((o) => window.__nexoraDemo.modifier("nexora:tasks", (t) => JSON.stringify(JSON.parse(t).map((x) => (x.id === o.id ? o : x)))), origineR);
+
   etape = "frise : glisser, référence, chemin critique"; console.log("→", etape);
   const J = (n) => page.evaluate((k) => { const [a, m, d] = new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()).split("-").map(Number); return new Date(Date.UTC(a, m - 1, d + k)).toISOString().slice(0, 10); }, n);
   const tache = async (id) => (await taches()).find((t) => t.id === id);
@@ -504,11 +524,19 @@ try {
   await jourAg.getByRole("button", { name: "Jour suivant" }).click();
   await jourAg.getByRole("button", { name: /^09:00–11:00 Visite DREAL/ }).waitFor();
   await capture("13-agenda");
+  // « + Tâche ce jour » : la palette s'ouvre avec la date du jour choisi (J+4).
+  await jourAg.getByRole("button", { name: /^Nouvelle tâche le / }).click();
+  await page.keyboard.type("Préparer la visite");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(async (d) => (window.__nexoraDemo.valeur("nexora:tasks") || []).some((t) => t.title === "Préparer la visite" && t.end === d), await J(4));
+  await page.keyboard.press("Escape");
+  // Retirée ensuite : les étapes suivantes comptent les tâches de la démo.
+  await page.evaluate(() => window.__nexoraDemo.modifier("nexora:tasks", (t) => JSON.stringify(JSON.parse(t).filter((x) => x.title !== "Préparer la visite"))));
 
   etape = "tableur : édition en masse et annulation"; console.log("→", etape);
   await page.keyboard.press("6");
   // Les notifications des étapes précédentes couvrent le bas du tableur.
-  for (const x of await page.getByRole("button", { name: "Fermer la notification" }).all()) await x.click();
+  for (const x of await page.getByRole("button", { name: "Fermer la notification" }).all()) await x.click({ timeout: 1000 }).catch(() => {}); // certaines se ferment seules entre-temps
   const tb = page.getByRole("table", { name: "Tableur des tâches" });
   await tb.waitFor();
   await tb.getByRole("checkbox", { name: "Sélectionner Revue DOE" }).check();

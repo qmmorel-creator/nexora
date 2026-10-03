@@ -14,6 +14,8 @@ import { MESURES_SANTE, formaterSante, graduationsSante, libellePearson, mesureS
 import { alignement, dateFr, ecartJours, matriceCss, photoDroite, photosDe, trierPhotos, type Photo } from "../donnees/photos";
 import { Bouton, Cartouche, Etat, Segment, Surtitre } from "../composants";
 import { PixelDuJour, SemaineHabitudes } from "./PixelDuJour";
+import { telecharger } from "./Reglages";
+import { sportCsv } from "../donnees/export";
 
 type Onglet = "habitudes" | "sport" | "sante" | "photos";
 
@@ -147,7 +149,8 @@ function Sport({ d, corps }: { d: Donnees; corps: AccesCorps | undefined }) {
   const comp = (a: number, b: number) => (b ? <span className={a >= b ? "ok" : "crit"}>{a >= b ? "+" : "−"}{Math.abs(a - b).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} h</span> : null);
   return (
     <>
-      <p className="discret">Le journal vient de la feuille « Activités Strava », par nexora-project (lecture). Les objectifs se règlent dans Réglages, Objectifs sport.</p>
+      <p className="discret co-intro">Le journal vient de la feuille « Activités Strava », par nexora-project (lecture). Les objectifs se règlent dans Réglages, Objectifs sport.
+        <Bouton variante="discret" onClick={() => telecharger(`nexora-sport-${auj}.csv`, sportCsv(filtrer(rows, periode, auj)), "text/csv;charset=utf-8")}>Exporter la période (CSV)</Bouton></p>
       <div className="fi-cartes">
         <div className="panneau sy-carte"><Surtitre>Dernière séance</Surtitre>{r.derniere ? <><span className="sy-valeur">{r.derniere.sport}</span><span className="sy-detail">{ilYa(r.ilYaJours || 0)} · {duree(r.derniere.total)}{r.derniere.distance ? ` · ${r.derniere.distance.toLocaleString("fr-FR")} km` : ""}</span></> : <span className="discret">aucune</span>}</div>
         <div className="panneau sy-carte"><Surtitre>Cette semaine</Surtitre><span className="sy-valeur mono">{formaterValeur(r.semaine.hours, "h")}</span><span className="sy-detail">{r.semaine.count} séance{r.semaine.count > 1 ? "s" : ""} · {comp(r.semaine.hours, r.semainePrec.hours)} vs semaine dernière à date</span></div>

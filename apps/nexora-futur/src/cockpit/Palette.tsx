@@ -14,13 +14,13 @@ type Element =
 const sansAccents = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 interface Props {
-  ouverte: boolean; modeInitial: "tout" | "creer"; onFermer: () => void;
+  ouverte: boolean; modeInitial: "tout" | "creer"; texteInitial?: string; onFermer: () => void;
   cat: Catalogues; taches: Tache[]; archive: Tache[]; aujourdhui: string; commandes: Commande[];
   onCreer: (s: Saisie, ouvrir: boolean) => void; onOuvrirTache: (t: Tache, archivee: boolean) => void; onAllerProjet: (id: string) => void;
 }
 
-export function Palette({ ouverte, modeInitial, onFermer, cat, taches, archive, aujourdhui, commandes, onCreer, onOuvrirTache, onAllerProjet }: Props) {
-  const [q, setQ] = useState("");
+export function Palette({ ouverte, modeInitial, texteInitial = "", onFermer, cat, taches, archive, aujourdhui, commandes, onCreer, onOuvrirTache, onAllerProjet }: Props) {
+  const [q, setQ] = useState(texteInitial);
   const [i, setI] = useState(0);
   const champ = useRef<HTMLInputElement>(null);
   const liste = useRef<HTMLUListElement>(null);

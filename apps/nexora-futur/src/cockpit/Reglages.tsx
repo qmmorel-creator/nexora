@@ -13,16 +13,18 @@ import { ATELIERS_DEPART, capacite, equipesDe, normaliserEquipes, type Equipe, t
 import { metaFiltresParDefaut, type Filtres } from "../donnees/filtres";
 import { sauvegarde, tachesCsv } from "../donnees/export";
 import { normaliserLienStrava } from "../donnees/strava";
+import { ACTIONS_CLAVIER, TOUCHES_RESERVEES, toucheValide, touches, type ActionClavier } from "../donnees/raccourcis";
+import { fusionnerPrefs, normaliserPrefs } from "../donnees/prefs";
 import { copiesSecours, oublierSecours, type CopieSecours } from "../donnees/secours";
 import { Bouton, Cartouche, Segment, Surtitre } from "../composants";
 import { ReglagesApparence } from "../composants/ReglagesApparence";
 import { useNotifier } from "./Notifications";
 
-export type OngletReglages = "apparence" | "projets" | "statuts" | "creation" | "habitudes" | "equipe" | "ateliers" | "filtres" | "sport" | "donnees" | "sauvegarde";
+export type OngletReglages = "apparence" | "projets" | "statuts" | "creation" | "habitudes" | "equipe" | "ateliers" | "filtres" | "sport" | "raccourcis" | "donnees" | "sauvegarde";
 export const ONGLETS_REGLAGES: { valeur: OngletReglages; libelle: string }[] = [
   { valeur: "apparence", libelle: "Apparence" }, { valeur: "projets", libelle: "Projets et dossiers" }, { valeur: "statuts", libelle: "Statuts et types" },
   { valeur: "creation", libelle: "Création" }, { valeur: "habitudes", libelle: "Thèmes d'habitudes" }, { valeur: "equipe", libelle: "Utilisateurs et équipes" },
-  { valeur: "ateliers", libelle: "Ateliers" }, { valeur: "filtres", libelle: "Méta-filtres" }, { valeur: "sport", libelle: "Objectifs sport" }, { valeur: "donnees", libelle: "Données et exports" }, { valeur: "sauvegarde", libelle: "Sauvegarde" },
+  { valeur: "ateliers", libelle: "Ateliers" }, { valeur: "filtres", libelle: "Méta-filtres" }, { valeur: "sport", libelle: "Objectifs sport" }, { valeur: "raccourcis", libelle: "Raccourcis" }, { valeur: "donnees", libelle: "Données et exports" }, { valeur: "sauvegarde", libelle: "Sauvegarde" },
 ];
 const CRITICITES: [string, string][] = [["", "—"], ["low", "Faible"], ["normal", "Normale"], ["high", "Haute"], ["urgent", "Urgente"]];
 
@@ -76,6 +78,7 @@ export function PageReglages({ d, onglet, setOnglet }: { d: Donnees; onglet: Ong
           {onglet === "ateliers" && <Ateliers d={d} ecrire={ecrire} />}
           {onglet === "filtres" && <MetaFiltres d={d} ecrire={ecrire} />}
           {onglet === "sport" && <ObjectifsSport d={d} ecrire={ecrire} />}
+          {onglet === "raccourcis" && <Raccourcis d={d} ecrire={ecrire} />}
           {onglet === "donnees" && <DonneesExports d={d} />}
           {onglet === "sauvegarde" && <Sauvegarde />}
         </div>
@@ -471,6 +474,34 @@ function DonneesExports({ d }: { d: Donnees }) {
         <div><b>Impression</b><span className="discret">Chaque vue s'imprime sans la navigation (palette : « Imprimer la vue ») ; la fiche mémo d'une tâche s'ouvre depuis sa fiche.</span>
           <Bouton onClick={() => window.print()}>Imprimer cette page</Bouton></div>
         <div><b>Capture externe</b><span className="discret">Même adresse que Nexora actuel, en remplaçant le domaine : <code className="mono">{`${location.origin}/?nexoraCapture=1&title=…&desc=…&due=AAAA-MM-JJ&project=…`}</code></span></div>
+      </div>
+    </Bloc>
+  );
+}
+
+/* ------------------------------------------------------------ Raccourcis */
+function Raccourcis({ d, ecrire }: { d: Donnees; ecrire: Ecrire }) {
+  const t = touches(d.prefs.raccourcis);
+  const [erreur, setErreur] = useState("");
+  const poser = (a: ActionClavier, k: string) => {
+    const x = k.toLowerCase();
+    if (!toucheValide(x)) { setErreur(`« ${k} » n'est pas utilisable : une lettre de a à z, hors ${[...TOUCHES_RESERVEES].join(", ")}.`); return; }
+    setErreur("");
+    ecrire("prefs", (v) => { const p = normaliserPrefs(v).raccourcis; const n = Object.fromEntries(Object.entries(p).filter(([b, y]) => b !== a && y !== x)); return fusionnerPrefs(v, { raccourcis: { ...n, [a]: x } }); }, `Raccourci « ${x.toUpperCase()} » enregistré.`);
+  };
+  return (
+    <Bloc titre="Raccourcis du Cockpit" aide="Une lettre par action. Donner à une action la lettre d'une autre lui retire la sienne. Les touches fixes (N, flèches, Suppr, Entrée, Échap, chiffres des lentilles, g, /, ?) ne changent pas."
+      actions={<Bouton variante="discret" onClick={() => ecrire("prefs", (v) => fusionnerPrefs(v, { raccourcis: {} }), "Raccourcis par défaut rétablis.")}>Rétablir les défauts</Bouton>}>
+      {erreur && <p role="alert" className="rg-aide" style={{ color: "var(--crit)" }}>{erreur}</p>}
+      <div className="rg-table" role="table" aria-label="Raccourcis">
+        {ACTIONS_CLAVIER.map(([a, libelle, def]) => (
+          <div key={a} className="rg-ligne rg-touche" role="row" aria-label={libelle}>
+            <span className="rg-fixe">{libelle}</span>
+            <input className="rg-texte rg-kbd mono" aria-label={`Touche pour ${libelle}`} value={t[a].toUpperCase()} maxLength={1} placeholder="—"
+              onChange={() => {}} onKeyDown={(e) => { if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); poser(a, e.key); } }} />
+            <span className="discret">défaut : {def.toUpperCase()}</span>
+          </div>
+        ))}
       </div>
     </Bloc>
   );

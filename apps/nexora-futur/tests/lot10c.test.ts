@@ -53,3 +53,18 @@ describe("exports", () => {
     expect(j).toEqual({ format: "nexora-futur-sauvegarde", version: 1, le: "2026-10-03", cles: { "nexora:tasks": { revision: "r3", valeur: [1] } } });
   });
 });
+
+import { actionDeTouche, normaliserRaccourcis, touches } from "../src/donnees/raccourcis";
+import { sportCsv } from "../src/donnees/export";
+describe("raccourcis réglables", () => {
+  it("lettres valides et uniques ; une lettre reprise retire celle de l'autre action", () => {
+    expect(normaliserRaccourcis({ terminer: "T", statut: "t", focus: "g", archiver: "1", inconnu: "z" })).toEqual({ terminer: "t" });
+    const t = touches({ terminer: "s" });
+    expect([t.terminer, t.statut, t.focus]).toEqual(["s", "", "f"]);
+    expect(actionDeTouche(t, "s")).toBe("terminer");
+    expect(actionDeTouche(t, "e")).toBeNull();
+  });
+  it("CSV du sport", () => {
+    expect(sportCsv([{ date: "2026-10-01", sport: "Course", title: "Footing", total: 45, moving: 40, distance: 8.2, elevation: 30, hr: 140, url: null }]).split("\r\n")[1]).toBe("2026-10-01;Course;Footing;45;40;8.2;30;140;");
+  });
+});
