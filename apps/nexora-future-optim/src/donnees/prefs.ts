@@ -19,13 +19,31 @@ export interface VueEnregistree {
   id: string; ecran: "planning" | "projets"; nom: string; filtre: FiltreVue;
   zoom?: Zoom; groupe?: string; style?: StyleGantt; reference?: Reference;
 }
+// Corps (#689) : quatre cartes, chacune titrée librement, jusqu'à quatre
+// mesures (clés de MESURES_SANTE) ; période, regroupement, sections repliées.
+export const PERIODES_CORPS = [14, 30, 90, 365] as const;
+export type PeriodeCorps = (typeof PERIODES_CORPS)[number];
+export const REGROUPEMENTS = ["jour", "semaine", "mois"] as const;
+export type RegroupementCorps = (typeof REGROUPEMENTS)[number];
+export const MAX_MESURES_CARTE = 4;
+export interface CarteCorps { id: string; titre: string; mesures: string[]; }
+export const CARTES_DEFAUT: CarteCorps[] = [
+  { id: "recup", titre: "Récupération et sommeil", mesures: ["recovery", "sleepHours"] },
+  { id: "cardio", titre: "Cardio", mesures: ["hrv", "restingHr"] },
+  { id: "comp", titre: "Composition corporelle", mesures: ["weight", "bodyFat"] },
+  { id: "vitaux", titre: "Signes vitaux", mesures: ["respRate", "spo2"] },
+];
+export const TUILE_CORPS_DEFAUT = ["recovery", "sleepHours", "hrv", "sport"];
+export interface PrefsCorps { periode: PeriodeCorps; regroupement: RegroupementCorps; regroupementSport: RegroupementCorps; cartes: CarteCorps[]; replies: string[]; }
+
 export interface PrefsOptim {
   version: 1;
   gantt: StyleGantt;
   planning: { zoom: Zoom; groupe: GroupePlanning; corps: boolean; argent: boolean };
   projets: { zoom: Zoom; groupe: GroupeProjet; reference: Reference };
   couleursHabitudes: Record<string, string>;
-  accueil: { pixels: boolean };
+  accueil: { pixels: boolean; corps: string[] };
+  corps: PrefsCorps;
   vues: VueEnregistree[];
 }
 
@@ -34,7 +52,9 @@ export const PREFS_VIDES: PrefsOptim = {
   version: 1, gantt: "ruban",
   planning: { zoom: "mois", groupe: "projet", corps: true, argent: false },
   projets: { zoom: "trimestre", groupe: "aucun", reference: "courante" },
-  couleursHabitudes: {}, accueil: { pixels: true }, vues: [],
+  couleursHabitudes: {}, accueil: { pixels: true, corps: TUILE_CORPS_DEFAUT },
+  corps: { periode: 30, regroupement: "jour", regroupementSport: "semaine", cartes: CARTES_DEFAUT, replies: [] },
+  vues: [],
 };
 // Compatibilité : nom attendu par le magasin de données.
 export type PrefsFutur = PrefsOptim;
@@ -68,6 +88,21 @@ function normaliserVue(v: unknown): VueEnregistree | null {
   };
 }
 
+const CLE_MESURE = /^[A-Za-z][A-Za-z0-9]{0,39}$/;
+const mesuresValides = (l: unknown, max = MAX_MESURES_CARTE) => [...new Set(chaines(l).filter((k) => CLE_MESURE.test(k)))].slice(0, max);
+export function normaliserCorps(v: unknown): PrefsCorps {
+  const b = objet(v);
+  const brutes = Array.isArray(b.cartes) ? b.cartes : [];
+  // Toujours les quatre cartes, dans l'ordre ; titre vide = titre par défaut.
+  const cartes = CARTES_DEFAUT.map((d) => {
+    const c = objet(brutes.find((x) => objet(x).id === d.id));
+    const titre = typeof c.titre === "string" && c.titre.trim() ? c.titre.trim().slice(0, 60) : d.titre;
+    return { id: d.id, titre, mesures: Array.isArray(c.mesures) ? mesuresValides(c.mesures) : d.mesures };
+  });
+  const periode = (PERIODES_CORPS as readonly number[]).includes(b.periode as number) ? (b.periode as PeriodeCorps) : 30;
+  return { periode, regroupement: parmi(b.regroupement, REGROUPEMENTS, "jour"), regroupementSport: parmi(b.regroupementSport, REGROUPEMENTS, "semaine"), cartes, replies: chaines(b.replies, 20) };
+}
+
 export function normaliserPrefs(v: unknown): PrefsOptim {
   if (!v || typeof v !== "object") return PREFS_VIDES;
   const b = objet(v), pl = objet(b.planning), pj = objet(b.projets), ac = objet(b.accueil);
@@ -79,7 +114,8 @@ export function normaliserPrefs(v: unknown): PrefsOptim {
     planning: { zoom: parmi(pl.zoom, ZOOMS, "mois"), groupe: parmi(pl.groupe, GROUPES_PLANNING, "projet"), corps: pl.corps !== false, argent: pl.argent === true },
     projets: { zoom: parmi(pj.zoom, ZOOMS, "trimestre"), groupe: parmi(pj.groupe, GROUPES_PROJET, "aucun"), reference: parmi(pj.reference, REFERENCES, "courante") },
     couleursHabitudes: couleurs,
-    accueil: { pixels: ac.pixels !== false },
+    accueil: { pixels: ac.pixels !== false, corps: Array.isArray(ac.corps) ? mesuresValides(ac.corps) : TUILE_CORPS_DEFAUT },
+    corps: normaliserCorps(b.corps),
     vues: (Array.isArray(b.vues) ? b.vues : []).map(normaliserVue).filter((x): x is VueEnregistree => !!x).slice(0, MAX_VUES),
   };
 }

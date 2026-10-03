@@ -19,8 +19,8 @@ function Espace({ email, source, demo }: { email: string; source: Source; demo?:
 function AppDemo() {
   const [source, setSource] = useState<Source | null>(null);
   useEffect(() => {
-    Promise.all([import("./demo/donnees"), import("./donnees/source"), import("./demo/finance"), import("./donnees/modele")]).then(([d, s, f, m]) => {
-      const src = s.sourceMemoire(d.donneesDemo(), d.rapportsDemo, f.financeDemo(m.aujourdhuiParis()));
+    Promise.all([import("./demo/donnees"), import("./donnees/source"), import("./demo/finance"), import("./donnees/modele"), import("./demo/corps")]).then(([d, s, f, m, c]) => {
+      const src = s.sourceMemoire(d.donneesDemo(), d.rapportsDemo, f.financeDemo(m.aujourdhuiParis()), c.corpsDemo(m.aujourdhuiParis()));
       (window as unknown as { __nexoraDemo: unknown }).__nexoraDemo = src;
       setSource(src);
     });

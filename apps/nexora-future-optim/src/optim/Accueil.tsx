@@ -5,7 +5,11 @@ import { ajouterJours, type Tache } from "../donnees/modele";
 import { lignesFrise } from "../donnees/planning";
 import { santeProjet } from "../donnees/projet";
 import type { SyntheseBudget } from "../donnees/finance";
-import { dateCourte, jourCourt, jourLong, majuscule, useOptim, useUi } from "./contexte";
+import { dateCourte, hm, jourCourt, jourLong, majuscule, useOptim, useUi } from "./contexte";
+import { formaterSante, mesureSante, MESURES_SANTE } from "../donnees/sante";
+import { resumeMetrique } from "../donnees/corps";
+import { MAX_MESURES_CARTE } from "../donnees/prefs";
+import { styleMesure, useCorps } from "./corps-donnees";
 import { Grille, graduations, HAUTEUR_RANGEE, infobulle, LigneGantt, ranger, tx, type Plage } from "./frise";
 import { Cadran, Coche, heureParisDec, hmf, PixelHabitudes, useElementsHoraires, useJour } from "./jour";
 import { SelecteurStyle, useDebordRuban } from "./Planning";
@@ -69,6 +73,42 @@ function BandeauArgent({ ouvrir }: { ouvrir: () => void }) {
   );
 }
 
+// Tuile Corps : jusqu'à quatre mesures au choix (« Données ▾ »), synchronisées
+// dans nexora:optimPrefs, puis les pixels d'habitudes des 7 derniers jours.
+function TuileCorps({ aller }: { aller: (ecran: string) => void }) {
+  const { jour, prefs, ecrirePrefs, d } = useOptim();
+  const { etats } = useJour();
+  const { releves, activites } = useCorps();
+  const [choix, setChoix] = useState(false);
+  const sel = prefs.accueil.corps;
+  const lundi = (() => { const dt = new Date(`${jour}T12:00:00Z`); return ajouterJours(jour, -((dt.getUTCDay() + 6) % 7)); })();
+  const kpi = (k: string) => {
+    if (k === "sport") {
+      const min = activites.filter((a) => a.date >= lundi && a.date <= jour).reduce((t, a) => t + (a.total || 0), 0), obj = d.objectifsSport.weeklyHours;
+      return <div key={k}><small>Sport</small><b>{hm(Math.round(min))}{obj ? <span>/{obj} h</span> : null}</b>{obj ? <span className="hx-bar"><i style={{ width: `${Math.min(100, min / (obj * 60) * 100)}%`, background: "#0e7490" }} /></span> : null}</div>;
+    }
+    const m = mesureSante(k), r = resumeMetrique(releves, k, jour, 30), st = styleMesure(k);
+    const pts = releves.filter((x) => typeof x[k] === "number").slice(-7).map((x) => x[k] as number);
+    const mn = Math.min(...pts), mx = Math.max(...pts);
+    return <div key={k}><small>{m?.label || k}</small><b>{r.dernier ? formaterSante(r.dernier.v, m) : "—"}</b>
+      {pts.length > 1 && <svg width="56" height="14" viewBox="0 0 56 14" aria-hidden="true"><polyline fill="none" stroke={st.couleur} strokeWidth="1.5" points={pts.map((v, i) => `${(i / (pts.length - 1) * 54 + 1).toFixed(1)},${(13 - (mx > mn ? (v - mn) / (mx - mn) : .5) * 12).toFixed(1)}`).join(" ")} /></svg>}</div>;
+  };
+  const groupes = [...new Set(MESURES_SANTE.map((m) => m.group))];
+  const basculer = (k: string) => void ecrirePrefs({ accueil: { ...prefs.accueil, corps: sel.includes(k) ? sel.filter((x) => x !== k) : [...sel, k].slice(0, MAX_MESURES_CARTE) } });
+  return (
+    <section className="hx-tile hx-t-body"><header className="hx-th"><h2>Corps</h2>
+      <span className="ox-rel"><button type="button" className="hx-more is-plain" aria-expanded={choix} onClick={() => setChoix(!choix)}>Données ▾</button>
+        {choix && <div className="hx-pop" role="dialog" aria-label="Données affichées"><header><b>Données affichées · {sel.length} / {MAX_MESURES_CARTE}</b><button type="button" className="hx-x" aria-label="Fermer" onClick={() => setChoix(false)}>×</button></header>
+          <h4>Activité</h4><label className={!sel.includes("sport") && sel.length >= MAX_MESURES_CARTE ? "is-off" : ""}><input type="checkbox" checked={sel.includes("sport")} disabled={!sel.includes("sport") && sel.length >= MAX_MESURES_CARTE} onChange={() => basculer("sport")} />Sport de la semaine</label>
+          {groupes.map((g) => <div key={g}><h4>{g}</h4>{MESURES_SANTE.filter((m) => m.group === g).map((m) => { const on = sel.includes(m.key), off = !on && sel.length >= MAX_MESURES_CARTE; return <label key={m.key} className={off ? "is-off" : ""}><input type="checkbox" checked={on} disabled={off} onChange={() => basculer(m.key)} />{m.label}</label>; })}</div>)}
+          <p className="hx-hint">Choix synchronisé entre vos appareils.</p></div>}</span>
+      <button type="button" className="hx-more" onClick={() => aller("corps")}>Ouvrir ›</button></header>
+      <div className="hx-kpis is-2">{sel.map(kpi)}</div>
+          <div className="hx-hstrip ox-hstrip" title="Habitudes des 7 derniers jours">{Array.from({ length: 7 }, (_, i) => ajouterJours(jour, i - 6)).map((x) => { const e = etats(x); return <span key={x} className={x === jour ? "is-today" : ""} title={`${dateCourte(x)} · ${e.faites}/${e.total}`}><PixelHabitudes date={x} taille={7} ecart={1.5} /><small>{jourCourt(x).slice(0, 2)}</small><em>{e.faites}/{e.total}</em></span>; })}</div>
+    </section>
+  );
+}
+
 export function Accueil({ aller }: { aller: (ecran: string, projet?: string) => void }) {
   const { d, jour, prefs, fini, retard } = useOptim();
   const { tachesDuJour, compteTaches, etats } = useJour();
@@ -88,9 +128,7 @@ export function Accueil({ aller }: { aller: (ecran: string, projet?: string) => 
               <div><h3 className="hx-h3">Aujourd'hui <small>{aujourdhui.length}</small></h3><ul className="hx-list">{aujourdhui.slice(0, 8).map((t) => <LigneTache key={t.id} t={t} />)}</ul>{aujourdhui.length > 8 && <button type="button" className="hx-more" onClick={() => aller("journee")}>+ {aujourdhui.length - 8} autres</button>}{!aujourdhui.length && <p className="hx-dim">Rien d'échu aujourd'hui.</p>}</div>
               <div><h3 className="hx-h3">À rattraper <span className="hx-red">{enRetard.length}</span><button type="button" className="hx-more" onClick={() => aller("planning")}>Planning ›</button></h3><ul className="hx-list">{enRetard.slice(0, 8).map((t) => <LigneTache key={t.id} t={t} sansProjet />)}</ul>{enRetard.length > 8 && <button type="button" className="hx-more" onClick={() => aller("planning")}>+ {enRetard.length - 8} autres</button>}</div>
             </div></div></section>
-        <section className="hx-tile hx-t-body"><header className="hx-th"><h2>Habitudes <small>7 derniers jours</small></h2><button type="button" className="hx-more" onClick={() => aller("journee")}>Ouvrir ›</button></header>
-          <div className="hx-hstrip ox-hstrip">{Array.from({ length: 7 }, (_, i) => ajouterJours(jour, i - 6)).map((x) => { const e = etats(x); return <span key={x} className={x === jour ? "is-today" : ""} title={`${dateCourte(x)} · ${e.faites}/${e.total}`}><PixelHabitudes date={x} taille={7} ecart={1.5} /><small>{jourCourt(x).slice(0, 2)}</small><em>{e.faites}/{e.total}</em></span>; })}</div>
-          <p className="hx-hint">Santé et sport (sommeil, récupération, HRV, séances) : lot 2, avec des cartes au choix dans les réglages.</p></section>
+        <TuileCorps aller={aller} />
         <Semaine ouvrirPlanning={() => aller("planning")} />
         <section className="hx-tile hx-t-proj"><header className="hx-th"><h2>Projets</h2><button type="button" className="hx-more" onClick={() => aller("projets")}>Ouvrir ›</button></header>
           <ul className="hx-plmini">{d.projets.map((p) => { const s = santeProjet(d.taches, p.id, d, jour); return s.total ? <li key={p.id}><button type="button" onClick={() => aller("projets", p.id)}><i style={{ background: p.color || "#94a3b8" }} />{p.name}</button><span className="hx-bar"><i style={{ width: `${s.avancement}%`, background: p.color || "#94a3b8" }} /></span><span className="hx-num">{s.avancement} %</span><span className={`hx-num ${s.retards ? "hx-red" : "hx-dim"}`}>{s.retards ? `${s.retards} ret.` : "—"}</span></li> : null; })}</ul></section>
