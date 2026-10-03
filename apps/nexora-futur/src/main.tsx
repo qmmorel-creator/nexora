@@ -5,6 +5,7 @@ import { feuilleJetons } from "./theme/jetons";
 import { appliquerApparence, lireApparence } from "./theme/apparence";
 import { App } from "./App";
 import "./style.css";
+import "./cockpit/cockpit.css";
 
 // Jetons et préférences appliqués avant le premier rendu (pas de flash de thème).
 const style = document.createElement("style");
