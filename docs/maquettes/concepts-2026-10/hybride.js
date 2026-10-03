@@ -55,6 +55,11 @@
     LOG.set(k, true);
   }
   // Pixel du jour : un carré n × n, une rangée par thème, une case par habitude.
+  // Couleur propre à chaque habitude (habit.color dans Nexora), réglable ; à défaut, celle du thème.
+  const themeOf = (h) => h.theme || THEMES.find((t) => t.habits.some((x) => x.id === h.id));
+  const hc = (h) => (S && S.hcolors && S.hcolors[h.id]) || themeOf(h).color;
+  const HLABEL = { done: "faite", part: "en partie", todo: "à faire", na: "non applicable" };
+  const htip = (h, d) => { const st = hstate(h, d); return `${h.name}|${themeOf(h).name} · ${HLABEL[st.state]}${h.kind === "numeric" ? ` · ${st.value || 0} / ${h.max} ${h.unit || ""}` : ""}|${K.dateShort(d)}`; };
   const SQ = Math.max(THEMES.length, ...THEMES.map((t) => t.habits.length));
   function pixel(d, size = 8, gap = 2, opts = {}) {
     const w = SQ * size + (SQ - 1) * gap;
@@ -62,11 +67,11 @@
     for (let r = 0; r < SQ; r++) for (let c = 0; c < SQ; c++) {
       const t = THEMES[r], h = t && t.habits[c], x = c * (size + gap), y = r * (size + gap);
       if (!h) { s += `<rect x="${x}" y="${y}" width="${size}" height="${size}" rx="${size / 5}" fill="none" stroke="#e6eaf0" stroke-width="1" stroke-dasharray="2 2"/>`; continue; }
-      const st = hstate(h, d), hot = opts.hot === h.id ? " is-hot" : "";
-      if (st.state === "done") s += `<rect class="hx-pc${hot}" data-hp="${h.id}" x="${x}" y="${y}" width="${size}" height="${size}" rx="${size / 5}" fill="${t.color}"/>`;
-      else if (st.state === "part") { const f = st.value / h.max; s += `<rect class="hx-pc${hot}" data-hp="${h.id}" x="${x}" y="${y}" width="${size}" height="${size}" rx="${size / 5}" fill="${t.color}" opacity=".18"/><rect x="${x}" y="${(y + size * (1 - f)).toFixed(1)}" width="${size}" height="${(size * f).toFixed(1)}" fill="${t.color}"/>`; }
-      else if (st.state === "na") s += `<rect class="hx-pc${hot}" data-hp="${h.id}" x="${x + .5}" y="${y + .5}" width="${size - 1}" height="${size - 1}" rx="${size / 5}" fill="url(#hx-na)" stroke="#cbd3de"/>`;
-      else s += `<rect class="hx-pc${hot}" data-hp="${h.id}" x="${x + .5}" y="${y + .5}" width="${size - 1}" height="${size - 1}" rx="${size / 5}" fill="#fff" stroke="${t.color}" stroke-opacity=".45"/>`;
+      const st = hstate(h, d), hot = opts.hot === h.id ? " is-hot" : "", col = hc({ ...h, theme: t }), tip = `data-tip="${e(htip({ ...h, theme: t }, d))}"`;
+      if (st.state === "done") s += `<rect class="hx-pc${hot}" data-hp="${h.id}" ${tip} x="${x}" y="${y}" width="${size}" height="${size}" rx="${size / 5}" fill="${col}"/>`;
+      else if (st.state === "part") { const f = st.value / h.max; s += `<rect class="hx-pc${hot}" data-hp="${h.id}" ${tip} x="${x}" y="${y}" width="${size}" height="${size}" rx="${size / 5}" fill="${col}" opacity=".18"/><rect x="${x}" y="${(y + size * (1 - f)).toFixed(1)}" width="${size}" height="${(size * f).toFixed(1)}" fill="${col}" pointer-events="none"/>`; }
+      else if (st.state === "na") s += `<rect class="hx-pc${hot}" data-hp="${h.id}" ${tip} x="${x + .5}" y="${y + .5}" width="${size - 1}" height="${size - 1}" rx="${size / 5}" fill="url(#hx-na)" stroke="#cbd3de"/>`;
+      else s += `<rect class="hx-pc${hot}" data-hp="${h.id}" ${tip} x="${x + .5}" y="${y + .5}" width="${size - 1}" height="${size - 1}" rx="${size / 5}" fill="#fff" stroke="${col}" stroke-opacity=".45"/>`;
     }
     return s + "</svg>";
   }
@@ -75,10 +80,13 @@
   let S;
   function reset() {
     K.reset(); S = K.state;
-    Object.assign(S, { screen: "accueil", projectId: "p-ctex6", taskId: null, composer: false, toast: "", hot: null, draft: "Relancer BC vendredi 14h #CTEX6 @Vincent !urgent", pop: "", filter: F0(), fpop: "", fview: "tout", pz: "mois", po: 0, pgroup: "projet", show: { corps: true, argent: true }, collapsed: new Set(), jz: "trimestre", jo: 0, cmp: "ref", cper: 30, closed: new Set(), atab: "mois", amonth: "oct", aq: "", acat: "", focus: "", metrics: { tile: new Set(["recovery", "sleep", "hrv", "sport"]), page: new Set(["sleep", "recovery", "hrv", "restingHr", "sport", "steps", "weight"]) } });
+    Object.assign(S, { screen: "accueil", projectId: "p-ctex6", taskId: null, composer: false, toast: "", hot: null, draft: "Relancer BC vendredi 14h #CTEX6 @Vincent !urgent", pop: "", filter: F0(), fpop: "", fview: "tout", pz: "mois", po: 0, pgroup: "projet", show: { corps: true, argent: true }, collapsed: new Set(), jz: "trimestre", jo: 0, cmp: "ref", cper: 30, closed: new Set(), atab: "mois", amonth: "oct", aq: "", acat: "", focus: "", hcolors: {}, settings: false, gstyle: "ruban", cagg: "jour", sagg: "semaine", undo: null, metrics: { tile: new Set(["recovery", "sleep", "hrv", "sport"]), page: new Set(["sleep", "recovery", "hrv", "restingHr", "sport", "steps", "weight"]) } });
     const pt = K.task("t7"); if (pt) pt.statusId = "s5"; // point hebdo de 8:30 déjà fait
     extendTasks();
     seedHabits();
+    // Budget cohérent dans toutes les vues : Logement ajouté, total = somme des enveloppes.
+    if (!D.budget.categories.some((c) => c.name === "Logement")) D.budget.categories.unshift({ name: "Logement", spent: 0, limit: 950, color: "#475569" });
+    D.budget.total = D.budget.categories.reduce((a, c) => a + c.limit, 0);
   }
 
   // ------------------------------------------------------------- briques
@@ -93,7 +101,7 @@
     return `<header class="hx-top"><span class="hx-logo"><i></i>Nexora</span>
       <nav class="hx-nav" aria-label="Sections">${NAV.map(([id, l]) => `<button type="button" data-nav="${id}" aria-current="${S.screen === id ? "page" : "false"}">${l}${id === "projets" && K.late().length ? `<em>${K.late().length}</em>` : ""}</button>`).join("")}</nav>
       <span class="hx-search">Rechercher, créer, aller à… <kbd>⌘K</kbd></span>
-      <button type="button" class="hx-btn is-primary" data-new>+ Nouvelle tâche</button></header>`;
+      <button type="button" class="hx-btn is-primary" data-new>+ Nouvelle tâche</button><button type="button" class="hx-gear" data-settings aria-label="Réglages" title="Réglages">⚙</button></header>`;
   }
 
   // ----------------------------------------------------------------- cadran
@@ -106,42 +114,43 @@
   }
   function dayItems(d) {
     const it = [];
-    K.tasks().filter((t) => t.startTime && t.start <= d && t.end >= d).forEach((t) => it.push({ h0: hh(t.startTime), h1: t.endTime ? hh(t.endTime) : hh(t.startTime) + .5, label: t.title, id: t.id, color: proj(t.projectId).color, kind: K.type(t.typeId).name === "Réunion" ? "Réunion" : "Tâche", done: K.isDone(t) }));
-    D.sport.planned.filter((s) => s.date === d).forEach((s) => it.push({ h0: hh(s.time), h1: hh(s.time) + s.minutes / 60, label: s.title, color: "#0e7490", kind: "Sport" }));
+    K.tasks().filter((t) => t.startTime && t.start <= d && t.end >= d).forEach((t) => it.push({ h0: hh(t.startTime), h1: t.endTime ? hh(t.endTime) : hh(t.startTime) + .5, label: t.title, id: t.id, color: proj(t.projectId).color, kind: K.type(t.typeId).name === "Réunion" ? "Réunion" : "Tâche", done: K.isDone(t), sub: `${proj(t.projectId).name} · ${K.status(t.statusId).name}${t.assignee ? " · " + t.assignee : ""}` }));
+    D.sport.planned.filter((s) => s.date === d).forEach((s) => it.push({ h0: hh(s.time), h1: hh(s.time) + s.minutes / 60, label: s.title, color: "#0e7490", kind: "Sport", sub: `${s.sport} · séance prévue · ${K.hm(s.minutes)}` }));
     return it.sort((a, b) => a.h0 - b.h0);
   }
+  const hmf = (h) => String(Math.floor(h)).padStart(2, "0") + ":" + String(Math.round((h % 1) * 60)).padStart(2, "0");
   function cadran(d, size = 440, mini = false) {
     const c = size / 2, R1 = size * .4, W1 = size * .042, R2 = size * .325, W2 = size * .03;
     let s = `<svg class="hx-dial" viewBox="0 0 ${size} ${size}" role="img" aria-label="Cadran de la journée et anneau des habitudes"><defs><pattern id="hx-na" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="#f6f7f9"/><line x1="0" y1="0" x2="0" y2="4" stroke="#cbd3de" stroke-width="1.4"/></pattern></defs>`;
     s += `<circle cx="${c}" cy="${c}" r="${R1}" fill="none" stroke="#eef1f6" stroke-width="${W1}"/>`;
-    s += `<path d="${arcDeg(c, c, R1, h2a(23.2), h2a(6.7))}" stroke="#d6def3" stroke-width="${W1}" fill="none"><title>Sommeil (heures à importer de Whoop)</title></path>`;
+    s += `<path d="${arcDeg(c, c, R1, h2a(23.2), h2a(6.7))}" stroke="#d6def3" stroke-width="${W1}" fill="none" data-tip="Sommeil · 23:10 → 06:40|${String(K.last(D.health.sleep)).replace(".", ",")} h · récupération ${K.last(D.health.recovery)} %|Heures de coucher et de lever à importer de Whoop"/>`;
     for (let h = 0; h < 24; h++) {
       const a = h2a(h), [x0, y0] = P(c, c, R1 + W1 / 2 + 3, a), [x1, y1] = P(c, c, R1 + W1 / 2 + (h % 6 ? 6 : 10), a);
       s += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="#b9c4d2" stroke-width="${h % 6 ? 1 : 1.5}"/>`;
       if (!mini && h % 3 === 0) { const [tx, ty] = P(c, c, R1 + W1 / 2 + 21, a); s += `<text x="${tx.toFixed(1)}" y="${(ty + 4).toFixed(1)}" text-anchor="middle" class="hx-hr">${String(h).padStart(2, "0")}</text>`; }
     }
-    dayItems(d).forEach((it) => { s += `<path d="${arcDeg(c, c, R1, h2a(it.h0), h2a(Math.max(it.h1, it.h0 + .3)))}" stroke="${it.color}" stroke-width="${W1}" fill="none" opacity="${it.done ? .35 : 1}" ${it.id ? `data-task="${it.id}" class="hx-arc"` : ""}><title>${e(it.label)}</title></path>`; });
+    dayItems(d).forEach((it) => { s += `<path d="${arcDeg(c, c, R1, h2a(it.h0), h2a(Math.max(it.h1, it.h0 + .3)))}" stroke="${it.color}" stroke-width="${W1}" fill="none" opacity="${it.done ? .35 : 1}" data-tip="${e(`${hmf(it.h0)}–${hmf(it.h1)} · ${it.label}|${it.kind}${it.sub ? " · " + it.sub : ""}${it.done ? "|Terminée" : ""}`)}" ${it.id ? `data-task="${it.id}" class="hx-arc"` : ""}/>`; });
     // Anneau des habitudes : un segment par habitude, regroupées par thème.
     const gapT = 5, gapH = 1.6, n = ALL.length, span = (360 - THEMES.length * gapT - (n - THEMES.length) * gapH) / n;
     let a = -90 + gapT / 2;
     THEMES.forEach((t) => {
       t.habits.forEach((h, i) => {
-        const a0 = a, a1 = a + span, st = hstate(h, d), hot = S.hot === h.id ? " is-hot" : "";
-        s += `<path class="hx-seg${hot}" data-hp="${h.id}" d="${arcDeg(c, c, R2, a0, a1)}" stroke="${st.state === "na" ? "url(#hx-na)" : t.color}" stroke-opacity="${st.state === "na" ? 1 : .16}" stroke-width="${W2}" fill="none"><title>${e(h.name)}</title></path>`;
-        if (st.state === "done") s += `<path class="hx-seg${hot}" data-hp="${h.id}" d="${arcDeg(c, c, R2, a0, a1)}" stroke="${t.color}" stroke-width="${W2}" fill="none" pointer-events="none"/>`;
-        if (st.state === "part") s += `<path d="${arcDeg(c, c, R2, a0, a0 + span * st.value / h.max)}" stroke="${t.color}" stroke-width="${W2}" fill="none" pointer-events="none"/>`;
+        const a0 = a, a1 = a + span, st = hstate(h, d), hot = S.hot === h.id ? " is-hot" : "", col = hc({ ...h, theme: t });
+        s += `<path class="hx-seg${hot}" data-hp="${h.id}" data-tip="${e(htip({ ...h, theme: t }, d))}" d="${arcDeg(c, c, R2, a0, a1)}" stroke="${st.state === "na" ? "url(#hx-na)" : col}" stroke-opacity="${st.state === "na" ? 1 : .16}" stroke-width="${W2}" fill="none"/>`;
+        if (st.state === "done") s += `<path class="hx-seg${hot}" data-hp="${h.id}" d="${arcDeg(c, c, R2, a0, a1)}" stroke="${col}" stroke-width="${W2}" fill="none" pointer-events="none"/>`;
+        if (st.state === "part") s += `<path d="${arcDeg(c, c, R2, a0, a0 + span * st.value / h.max)}" stroke="${col}" stroke-width="${W2}" fill="none" pointer-events="none"/>`;
         a = a1 + (i < t.habits.length - 1 ? gapH : gapT);
       });
     });
     if (d === TODAY) {
       const ang = h2a(hh(NOW)), [x, y] = P(c, c, R1 + W1 / 2 + 3, ang), [x2, y2] = P(c, c, R2 + W2 / 2 + 6, ang);
-      s += `<line x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#18263d" stroke-width="2.5" stroke-linecap="round"/><circle cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3" fill="#18263d"/>`;
+      s += `<line x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#18263d" stroke-width="3.5" stroke-linecap="round" data-tip="${e(`Maintenant · ${NOW}|${(() => { const n = dayItems(d).find((i) => i.h0 >= hh(NOW) && !i.done); return n ? "Ensuite : " + hmf(n.h0) + " " + n.label : "Plus rien d'horodaté"; })()}`)}"/><circle cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3" fill="#18263d"/>`;
     }
     const ps = mini ? 9 : 14, pg = mini ? 2 : 3, hw = SQ * ps + (SQ - 1) * pg, ts = dayTasks(d), tn = Math.max(2, Math.ceil(Math.sqrt(ts.length || 1))), tps = (hw - (tn - 1) * pg) / tn;
-    const gapC = mini ? 12 : 22, total = hw * 2 + gapC, x0 = c - total / 2, y0 = c - hw / 2 - (mini ? 6 : 12), hc = count(d), tc = tcount(d);
+    const gapC = mini ? 12 : 22, total = hw * 2 + gapC, x0 = c - total / 2, y0 = c - hw / 2 - (mini ? 6 : 12), hcnt = count(d), tc = tcount(d);
     s += `<g transform="translate(${x0.toFixed(1)} ${y0.toFixed(1)})">${taskSquare(d, tps, pg).replace(/<svg[^>]*>|<\/svg>/g, "")}</g>`;
     s += `<g transform="translate(${(x0 + hw + gapC).toFixed(1)} ${y0.toFixed(1)})">${pixel(d, ps, pg, { hot: S.hot }).replace(/<svg[^>]*>|<\/svg>/g, "")}</g>`;
-    s += `<text x="${(x0 + hw / 2).toFixed(1)}" y="${(y0 + hw + (mini ? 13 : 20)).toFixed(1)}" text-anchor="middle" class="hx-cnum">${tc.done}<tspan class="hx-cden">/${tc.total}</tspan></text><text x="${(x0 + hw + gapC + hw / 2).toFixed(1)}" y="${(y0 + hw + (mini ? 13 : 20)).toFixed(1)}" text-anchor="middle" class="hx-cnum">${hc.done}<tspan class="hx-cden">/${hc.total}</tspan></text>`;
+    s += `<text x="${(x0 + hw / 2).toFixed(1)}" y="${(y0 + hw + (mini ? 13 : 20)).toFixed(1)}" text-anchor="middle" class="hx-cnum">${tc.done}<tspan class="hx-cden">/${tc.total}</tspan></text><text x="${(x0 + hw + gapC + hw / 2).toFixed(1)}" y="${(y0 + hw + (mini ? 13 : 20)).toFixed(1)}" text-anchor="middle" class="hx-cnum">${hcnt.done}<tspan class="hx-cden">/${hcnt.total}</tspan></text>`;
     if (!mini) s += `<text x="${(x0 + hw / 2).toFixed(1)}" y="${(y0 - 8).toFixed(1)}" text-anchor="middle" class="hx-csub">tâches</text><text x="${(x0 + hw + gapC + hw / 2).toFixed(1)}" y="${(y0 - 8).toFixed(1)}" text-anchor="middle" class="hx-csub">habitudes</text>`;
     return s + "</svg>";
   }
@@ -157,7 +166,7 @@
   }
   function taskCell(t, x, y, s) {
     const st = tst(t), late = K.isLate(t), done = K.isDone(t);
-    let g = `<g class="hx-tc" data-task="${t.id}"><title>${e(t.title)} · ${st.label}${late ? " · en retard" : ""}</title><rect x="${x}" y="${y}" width="${s}" height="${s}" rx="${s / 4}" fill="${st.fill}" stroke="${late ? "#dc2626" : st.stroke}" stroke-width="${late ? 2 : 1.3}"/>`;
+    let g = `<g class="hx-tc" data-task="${t.id}" data-tip="${e(`${t.title}|${proj(t.projectId).name} · ${st.label}${late ? ` · ${K.lateDays(t)} j de retard` : ""}|Échéance ${K.dateShort(t.end)}${t.startTime ? " · " + t.startTime : ""}${t.progress ? ` · ${t.progress} %` : ""}`)}"><rect x="${x}" y="${y}" width="${s}" height="${s}" rx="${s / 4}" fill="${st.fill}" stroke="${late ? "#dc2626" : st.stroke}" stroke-width="${late ? 2 : 1.3}"/>`;
     if (done) g += `<path d="M${x + s * .28} ${y + s * .52} l${s * .15} ${s * .15} l${s * .3} -${s * .32}" fill="none" stroke="#fff" stroke-width="${Math.max(1.4, s / 10)}" stroke-linecap="round" stroke-linejoin="round"/>`;
     else if (t.progress) g += `<rect x="${x + 3}" y="${y + s - 5}" width="${(s - 6) * t.progress / 100}" height="2.5" rx="1" fill="#245edb"/>`;
     return g + "</g>";
@@ -165,7 +174,7 @@
   function taskSquare(d, size = 8, gap = 2) {
     const ts = dayTasks(d), n = Math.max(2, Math.ceil(Math.sqrt(ts.length || 1))), w = n * size + (n - 1) * gap;
     let s = `<svg class="hx-px" viewBox="0 0 ${w} ${w}" width="${w}" height="${w}" aria-hidden="true">`;
-    for (let i = 0; i < n * n; i++) { const x = (i % n) * (size + gap), y = Math.floor(i / n) * (size + gap), t = ts[i]; s += t ? `<rect x="${x + .5}" y="${y + .5}" width="${size - 1}" height="${size - 1}" rx="${size / 5}" fill="${tst(t).fill}" stroke="${K.isLate(t) ? "#dc2626" : tst(t).stroke}"/>` : `<rect x="${x + .5}" y="${y + .5}" width="${size - 1}" height="${size - 1}" rx="${size / 5}" fill="none" stroke="#e6eaf0" stroke-dasharray="2 2"/>`; }
+    for (let i = 0; i < n * n; i++) { const x = (i % n) * (size + gap), y = Math.floor(i / n) * (size + gap), t = ts[i]; s += t ? `<rect data-tip="${e(`${t.title}|${proj(t.projectId).name} · ${tst(t).label}${K.isLate(t) ? " · en retard" : ""}`)}" x="${x + .5}" y="${y + .5}" width="${size - 1}" height="${size - 1}" rx="${size / 5}" fill="${tst(t).fill}" stroke="${K.isLate(t) ? "#dc2626" : tst(t).stroke}"/>` : `<rect x="${x + .5}" y="${y + .5}" width="${size - 1}" height="${size - 1}" rx="${size / 5}" fill="none" stroke="#e6eaf0" stroke-dasharray="2 2"/>`; }
     return s + "</svg>";
   }
   const tcount = (d) => { const ts = dayTasks(d); return { done: ts.filter(K.isDone).length, total: ts.length }; };
@@ -197,8 +206,8 @@
 
   // ----------------------------------------------------------- habitudes UI
   function habitCell(h0, d, x, y, s) {
-    const h = ALL.find((x) => x.id === h0.id) || h0, st = hstate(h, d), c = h.theme.color, hot = S.hot === h.id ? " is-hot" : "";
-    let g = `<g class="hx-pc${hot}" data-hp="${h.id}" data-hab="${h.id}|${d}|toggle"><title>${e(h.name)}</title>`;
+    const h = ALL.find((x) => x.id === h0.id) || h0, st = hstate(h, d), c = hc(h), hot = S.hot === h.id ? " is-hot" : "";
+    let g = `<g class="hx-pc${hot}" data-hp="${h.id}" data-hab="${h.id}|${d}|toggle" data-tip="${e(htip(h, d))}">`;
     if (st.state === "done") g += `<rect x="${x}" y="${y}" width="${s}" height="${s}" rx="${s / 4}" fill="${c}"/><path d="M${x + s * .28} ${y + s * .52} l${s * .15} ${s * .15} l${s * .3} -${s * .32}" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
     else if (st.state === "part") g += `<rect x="${x}" y="${y}" width="${s}" height="${s}" rx="${s / 4}" fill="${c}" fill-opacity=".15" stroke="${c}"/><rect x="${x + 3}" y="${y + s - 5}" width="${(s - 6) * st.value / h.max}" height="2.5" rx="1" fill="${c}"/><text x="${x + s / 2}" y="${y + s / 2 + 2}" text-anchor="middle" class="hx-pctxt">${st.value}/${h.max}</text>`;
     else if (st.state === "na") g += `<rect x="${x + .5}" y="${y + .5}" width="${s - 1}" height="${s - 1}" rx="${s / 4}" fill="url(#hx-na)" stroke="#cbd3de"/>`;
@@ -210,7 +219,7 @@
     return `<section class="hx-pxpanel" aria-label="Habitudes du jour, une habitude par pixel">
       <header class="hx-th"><h2>Habitudes</h2><span class="hx-badge">${cnt.done} / ${cnt.total}</span><span class="hx-dnav"><button type="button" aria-label="Jour précédent" disabled>‹</button>Aujourd'hui<button type="button" aria-label="Jour suivant" disabled>›</button></span></header>
       <div class="hx-pdj">${pixel(d, 9, 2)}<div><b>Le pixel du jour</b><small>1 habitude = 1 pixel · non applicables exclues</small></div><strong>${cnt.done}<span> / ${cnt.total}</span></strong></div>
-      ${THEMES.map((t) => { const c = count(d, t); return wired(`<i style="background:${t.color}"></i><b>${e(t.name)}</b><span>${c.done} / ${c.total}</span><small>${t.mode === "single" ? "un seul choix" : ""}</small>`, t.habits.map((h) => { const st = hstate(h, d); return `<div class="hx-wr hx-hrow is-${st.state} ${S.hot === h.id ? "is-hot" : ""}" data-hp="${h.id}" style="--t:${t.color}"><span class="hx-hname">${e(h.name)}${h.unit ? ` <small>${h.unit}</small>` : ""}</span>${h.kind === "numeric" ? `<span class="hx-step"><button type="button" data-hab="${h.id}|${d}|minus" aria-label="Moins">−</button><b>${st.value || 0}/${h.max}</b><button type="button" data-hab="${h.id}|${d}|plus" aria-label="Plus">+</button></span>` : `<button type="button" class="hx-box ${st.state === "done" ? "is-on" : ""}" data-hab="${h.id}|${d}|toggle" aria-pressed="${st.state === "done"}" aria-label="${e(h.name)}">${st.state === "done" ? "✓" : ""}</button>`}<button type="button" class="hx-na ${st.state === "na" ? "is-on" : ""}" data-hab="${h.id}|${d}|na" aria-pressed="${st.state === "na"}" title="Non applicable aujourd'hui">n/a</button></div>`; }), t.habits.map((h) => ({ wire: t.color, hp: h.id, draw: (x, y, s) => habitCell(h, d, x, y, s) })), t.color); }).join("")}
+      ${THEMES.map((t) => { const c = count(d, t); return wired(`<i style="background:${t.color}"></i><b>${e(t.name)}</b><span>${c.done} / ${c.total}</span><small>${t.mode === "single" ? "un seul choix" : ""}</small>`, t.habits.map((h) => { const st = hstate(h, d); return `<div class="hx-wr hx-hrow is-${st.state} ${S.hot === h.id ? "is-hot" : ""}" data-hp="${h.id}" style="--t:${hc({ ...h, theme: t })}"><span class="hx-hname"><i class="hx-hdot" style="background:${hc({ ...h, theme: t })}"></i>${e(h.name)}${h.unit ? ` <small>${h.unit}</small>` : ""}</span>${h.kind === "numeric" ? `<span class="hx-step"><button type="button" data-hab="${h.id}|${d}|minus" aria-label="Moins">−</button><b>${st.value || 0}/${h.max}</b><button type="button" data-hab="${h.id}|${d}|plus" aria-label="Plus">+</button></span>` : `<button type="button" class="hx-box ${st.state === "done" ? "is-on" : ""}" data-hab="${h.id}|${d}|toggle" aria-pressed="${st.state === "done"}" aria-label="${e(h.name)}">${st.state === "done" ? "✓" : ""}</button>`}<button type="button" class="hx-na ${st.state === "na" ? "is-on" : ""}" data-hab="${h.id}|${d}|na" aria-pressed="${st.state === "na"}" title="Non applicable aujourd'hui">n/a</button></div>`; }), t.habits.map((h) => ({ wire: hc({ ...h, theme: t }), hp: h.id, draw: (x, y, s) => habitCell(h, d, x, y, s) })), t.color); }).join("")}
       <div class="hx-week">${Array.from({ length: 7 }, (_, i) => K.addDays(d, i - 6)).map((x) => { const c = count(x); return `<span class="${x === d ? "is-today" : ""}">${pixel(x, 6, 1.5)}<b>${K.dayShort(x).slice(0, 3)} ${Number(x.slice(8))}</b><small>${c.done} / ${c.total}</small></span>`; }).join("")}</div>
     </section>`;
   }
@@ -325,20 +334,56 @@
       <div class="hx-nav2"><button type="button" data-shift="${scope}|-1" aria-label="Période précédente">‹</button><button type="button" data-shift="${scope}|0">Aujourd'hui</button><button type="button" data-shift="${scope}|1" aria-label="Période suivante">›</button></div><span class="hx-range">${rangeLabel(r)}</span></div>`;
   }
   // Rangement en lignes sans chevauchement (titre compris).
+  // Représentations de Gantt, au choix : ruban, pixels, fil, comète, métro.
+  const GSTYLES = [["ruban", "Ruban"], ["pixels", "Pixels"], ["fil", "Fil"], ["comete", "Comète"], ["metro", "Métro"]];
+  const gstyleSeg = (sm) => `<div class="hx-gsel"><span>Représentation</span><div class="hx-seg ${sm ? "is-xs" : "is-sm"}">${GSTYLES.map(([id, l]) => `<button type="button" data-gstyle="${id}" aria-pressed="${S.gstyle === id}">${l}</button>`).join("")}</div></div>`;
+  const labW = (t) => t.title.length * 6.3 + 22;
+  // Rangement en lignes sans chevauchement, titre compris selon la représentation.
   function pack(ts, r, trackW = 1050) {
+    const st = S.gstyle;
     const items = ts.map((t) => { const a = tx(r, t.milestone ? t.end : t.start), b = t.milestone ? a : tx(r, K.addDays(t.end, 1)); return { t, a, b }; }).filter((x) => x.b >= 0 && x.a <= 100).sort((x, y) => x.a - y.a);
     const rows = [];
-    items.forEach((it) => { const lab = ((it.t.title.length * 6.4 + 26) / trackW) * 100; const end = Math.max(it.b, Math.max(0, it.a) + lab); let row = rows.findIndex((v) => v <= Math.max(0, it.a) - 0.4); if (row < 0) { row = rows.length; rows.push(0); } rows[row] = end; it.row = row; });
+    items.forEach((it) => {
+      const a0 = Math.max(0, it.a), barPx = (Math.min(100, it.b) - a0) / 100 * trackW, lab = labW(it.t);
+      const ext = it.t.milestone ? lab + 14 : st === "fil" || st === "comete" ? barPx + lab + 16 : st === "ruban" ? (barPx >= lab ? barPx : barPx + lab + 8) : Math.max(barPx, lab);
+      const end = a0 + (ext / trackW) * 100;
+      let row = rows.findIndex((v) => v <= a0 - 0.3); if (row < 0) { row = rows.length; rows.push(0); } rows[row] = end; it.row = row;
+    });
     return { items, rows: Math.max(1, rows.length) };
   }
   const ROWH = 26;
+  const gtip = (t) => e(`${t.title}|${proj(t.projectId).name} · ${K.status(t.statusId).name}${t.assignee ? " · " + t.assignee : ""}|${t.milestone ? "Jalon le " + K.dateShort(t.end) : `${K.dateShort(t.start)} → ${K.dateShort(t.end)} · ${K.days(t.start, t.end) + 1} j`}${t.progress ? ` · ${t.progress} %` : ""}${K.isLate(t) ? `|${K.lateDays(t)} jours de retard` : ""}|Glisser pour replanifier · bords pour étirer`);
+  // Unité des pixels : le jour jusqu'au trimestre, la semaine sur un an, le mois au-delà.
+  const pxUnit = (r) => (r.span <= 98 ? 1 : r.span <= 366 ? 7 : 30.4);
+  function pixelsOf(t, r, a, b) {
+    const u = pxUnit(r), s0 = t.start < r.start ? r.start : t.start, s1 = t.end > r.end ? r.end : t.end, n = Math.max(1, Math.round((K.days(s0, s1) + 1) / u));
+    const el = TODAY < s0 ? 0 : Math.min(n, Math.round((K.days(s0, TODAY < s1 ? TODAY : s1) + 1) / u));
+    return Array.from({ length: n }, (_, i) => `<i class="${K.isDone(t) ? "is-done" : i < el ? "is-el" : ""}"></i>`).join("");
+  }
   function lineItem(it, r) {
-    const t = it.t, p = proj(t.projectId), late = K.isLate(t), done = K.isDone(t), a = Math.max(0, it.a), b = Math.min(100, it.b);
+    const t = it.t, p = proj(t.projectId), late = K.isLate(t), done = K.isDone(t), a = Math.max(0, it.a), b = Math.min(100, it.b), st = S.gstyle;
     const cls = `${done ? "is-done" : ""} ${late ? "is-late" : ""} is-${t.statusId} ${it.a < 0 ? "cut-l" : ""} ${it.b > 100 ? "cut-r" : ""} ${S.taskId === t.id ? "is-sel" : ""}`;
-    if (t.milestone) return `<button type="button" class="hx-ms ${cls}" data-task="${t.id}" style="left:${a}%;top:${it.row * ROWH}px;--c:${p.color}" title="${e(t.title)} · ${K.dateShort(t.end)}"><i></i><span>${e(t.title)} <small>${K.dateShort(t.end)}</small></span></button>`;
-    let h = `<button type="button" class="hx-li ${cls}" data-task="${t.id}" style="left:${a}%;width:${Math.max(.35, b - a)}%;top:${it.row * ROWH}px;--c:${p.color}" title="${e(t.title)} · ${K.dateShort(t.start)} → ${K.dateShort(t.end)}"><span>${done ? "✓ " : ""}${e(t.title)}</span><i></i></button>`;
-    if (late) { const o0 = Math.max(0, tx(r, K.addDays(t.end, 1))), o1 = Math.min(100, tx(r, TODAY)); if (o1 > o0) h += `<span class="hx-over" style="left:${o0}%;width:${o1 - o0}%;top:${it.row * ROWH}px" title="${K.lateDays(t)} jours de retard"></span>`; }
+    const top = it.row * ROWH, tip = `data-tip="${gtip(t)}"`;
+    if (t.milestone) return `<button type="button" class="hx-ms ${cls}" data-task="${t.id}" data-drag="${t.id}" ${tip} style="left:${a}%;top:${top}px;--c:${p.color}"><i></i><span>${e(t.title)} <small>${K.dateShort(t.end)}</small></span></button>`;
+    const w = Math.max(.35, b - a), prog = done ? 100 : t.progress || 0;
+    let inner;
+    if (st === "ruban") inner = `<span class="g-bar"><i class="g-prog" style="width:${prog}%"></i><span class="g-lab">${done ? "✓ " : ""}${e(t.title)}</span></span>`;
+    else if (st === "pixels") inner = `<span class="g-lab">${e(t.title)}</span><span class="g-px">${pixelsOf(t, r, a, b)}</span>`;
+    else if (st === "fil") inner = `<span class="g-line"></span><span class="g-lab">${done ? "✓ " : ""}${e(t.title)} <small>${K.dateShort(t.end)}</small></span>`;
+    else if (st === "comete") inner = `<span class="g-tail"></span><i class="g-head"></i><span class="g-lab">${e(t.title)} <small>${K.dateShort(t.end)}</small></span>`;
+    else inner = `<span>${done ? "✓ " : ""}${e(t.title)}</span><i></i>`;
+    let h = `<button type="button" class="${st === "metro" ? "hx-li" : "hx-g gs-" + st} ${cls}" data-task="${t.id}" data-drag="${t.id}" ${tip} style="left:${a}%;width:${w}%;top:${top}px;--c:${p.color}">${inner}</button>`;
+    if (late) { const o0 = Math.max(0, tx(r, K.addDays(t.end, 1))), o1 = Math.min(100, tx(r, TODAY)); if (o1 > o0) h += `<span class="hx-over gs-o-${st}" style="left:${o0}%;width:${o1 - o0}%;top:${top}px"></span>`; }
     return h;
+  }
+  // Barre d'une ligne de projet (une tâche par ligne, titre dans la colonne de gauche).
+  function projBar(t, r, a0, a1, color) {
+    const st = S.gstyle, done = K.isDone(t), a = Math.max(0, a0), w = Math.max(.35, Math.min(100, a1) - a), prog = done ? 100 : t.progress || 0, tip = `data-tip="${gtip(t)}"`;
+    if (t.milestone) return `<i class="hx-pms" data-drag="${t.id}" ${tip} style="left:${a0}%;--c:${color}"></i>`;
+    const cls = `is-${t.statusId} ${done ? "is-done" : ""} ${K.isLate(t) ? "is-late" : ""}`;
+    if (st === "metro") return `<i class="hx-pbar ${cls}" data-drag="${t.id}" ${tip} style="left:${a}%;width:${w}%;--c:${color}"></i>`;
+    const inner = st === "ruban" ? `<span class="g-bar"><i class="g-prog" style="width:${prog}%"></i>${prog && !done ? `<span class="g-lab is-pct">${prog} %</span>` : ""}</span>` : st === "pixels" ? `<span class="g-px">${pixelsOf(t, r)}</span>` : st === "fil" ? `<span class="g-line"></span>` : `<span class="g-tail"></span><i class="g-head"></i>`;
+    return `<span class="hx-g gs-${st} is-row ${cls}" data-drag="${t.id}" ${tip} style="left:${a}%;width:${w}%;--c:${color}">${inner}</span>`;
   }
   function gridLines(r) { return ticks(r).map((k) => `<i class="hx-gl ${k.major ? "is-major" : ""}" style="left:${tx(r, k.iso)}%"></i>`).join("") + (TODAY >= r.start && TODAY <= r.end ? `<i class="hx-today" style="left:${tx(r, TODAY) + (r.zoom === "semaine" ? 50 / r.span : 0)}%"></i>` : ""); }
   function groupLanes(ts, by) {
@@ -351,7 +396,7 @@
   // ------------------------------------------- séries de démo sur 120 jours
   // Santé (mêmes mesures que HEALTH_METRICS), séances de sport et dépenses
   // quotidiennes. Les 14 derniers jours reprennent les valeurs de kit.js.
-  const NDAYS = 120;
+  const NDAYS = 400;
   const SERIES = { dates: [], sleep: [], recovery: [], hrv: [], restingHr: [], weight: [], steps: [], spend: [] };
   const SESSIONS = [];
   const SPORT_COL = { Course: "#0e7490", Vélo: "#7c5cd6", Natation: "#0284c7", Renforcement: "#d97706" };
@@ -362,8 +407,8 @@
       const sl = Math.min(8.9, Math.max(5.3, 7.05 + .55 * Math.sin(i / 5) + (rnd() - .5) * 1.3 + (we ? .4 : 0)));
       const rc = Math.round(Math.min(95, Math.max(20, 28 + (sl - 6) * 20 + (rnd() - .5) * 24)));
       SERIES.dates.push(d); SERIES.sleep.push(Math.round(sl * 10) / 10); SERIES.recovery.push(rc);
-      SERIES.hrv.push(Math.round(38 + rc * .22 + (rnd() - .5) * 6 + i * .04)); SERIES.restingHr.push(Math.round(58.5 - rc * .08 + (rnd() - .5) * 3));
-      SERIES.weight.push(Math.round((81.1 - i * .022 + (rnd() - .5) * .45) * 10) / 10); SERIES.steps.push(Math.round(4800 + rnd() * 8800 + (we ? 2200 : 0)));
+      SERIES.hrv.push(Math.round(41 + rc * .2 + (rnd() - .5) * 6)); SERIES.restingHr.push(Math.round(58.5 - rc * .08 + (rnd() - .5) * 3));
+      SERIES.weight.push(Math.round((79.7 + (NDAYS - 14 - i) * .011 + (rnd() - .5) * .45) * 10) / 10); SERIES.steps.push(Math.round(4800 + rnd() * 8800 + (we ? 2200 : 0)));
       SERIES.spend.push(d > TODAY ? 0 : Math.round((rnd() < .78 ? 8 + rnd() * 55 : 0) + (rnd() < .07 ? 60 + rnd() * 90 : 0)));
       const kinds = ["Course", "Renforcement", "Vélo", "Natation"];
       if (i < NDAYS - 14 && (dw === 2 || dw === 4 || dw === 0) && rnd() < .85) { const k = dw === 0 ? (rnd() < .6 ? "Vélo" : "Course") : kinds[Math.floor(rnd() * 4)]; SESSIONS.push({ date: d, sport: k, title: k === "Vélo" ? "Sortie" : k === "Course" ? "Footing" : k === "Natation" ? "Piscine" : "Gainage", minutes: k === "Vélo" ? 60 + Math.round(rnd() * 60) : 30 + Math.round(rnd() * 25), km: k === "Course" ? Math.round((6 + rnd() * 5) * 10) / 10 : k === "Vélo" ? Math.round(25 + rnd() * 30) : 0 }); }
@@ -387,7 +432,7 @@
     const r = { zoom: "semaine", start: TODAY, end: J(6), span: 7 };
     const ts = K.tasks().filter((t) => !K.isDone(t) && t.statusId !== "s6" && t.end >= TODAY && t.start <= J(6));
     return `<div class="hx-tl is-mini"><div class="hx-tlhead"><span></span><div class="hx-tltrack">${ticks(r).map((k) => `<span class="hx-tick ${k.iso === TODAY ? "is-today" : ""}" style="left:${tx(r, k.iso)}%;width:${100 / 7}%">${k.label}</span>`).join("")}</div></div>
-      ${D.projects.map((p) => { const pk = pack(ts.filter((t) => t.projectId === p.id), r, 640); if (!pk.items.length) return ""; return `<div class="hx-lane"><span class="hx-lh is-static" style="--c:${p.color}"><b>${e(p.name)}</b></span><div class="hx-ltrack" style="height:${pk.rows * ROWH + 6}px">${gridLines(r)}${pk.items.map((it) => lineItem(it, r)).join("")}</div></div>`; }).join("")}
+      ${D.projects.map((p) => { const pk = pack(ts.filter((t) => t.projectId === p.id), r, 640); if (!pk.items.length) return ""; return `<div class="hx-lane" data-lane-project="${p.id}"><span class="hx-lh is-static" style="--c:${p.color}"><b>${e(p.name)}</b></span><div class="hx-ltrack" data-rs="${r.start}" data-rn="${r.span}" style="height:${pk.rows * ROWH + 6}px">${gridLines(r)}${pk.items.map((it) => lineItem(it, r)).join("")}</div></div>`; }).join("")}
       <div class="hx-lane"><span class="hx-lh is-static" style="--c:#0e7490"><b>Sport</b></span><div class="hx-ltrack" style="height:${ROWH + 4}px">${gridLines(r)}${D.sport.planned.filter((s) => s.date <= J(6)).map((s) => `<span class="hx-dot" style="left:${tx(r, s.date) + 100 / 14}%;--c:${SPORT_COL[s.sport] || "#0e7490"}" title="${e(s.title)}"><i></i>${s.time} ${e(s.sport)}</span>`).join("")}</div></div></div>`;
   }
   function accueil() {
@@ -395,15 +440,15 @@
     const next = dayItems(TODAY).find((i) => i.h0 >= hh(NOW) && !i.done);
     const todo = D.budget.toCategorize.filter((x) => !S.categorized[x.id]);
     const fmt = (h) => String(Math.floor(h)).padStart(2, "0") + ":" + String(Math.round((h % 1) * 60)).padStart(2, "0");
-    const hc = count(TODAY), tc = tcount(TODAY);
+    const hcnt = count(TODAY), tc = tcount(TODAY);
     return `<main class="hx-main hx-home" data-scroll>
-      <div class="hx-hello is-tight"><h1>Lundi 5 octobre</h1><p>${today.length} tâches aujourd'hui · <span class="hx-red">${late.length} en retard</span> · ${next ? `ensuite <b>${fmt(next.h0)} ${e(next.label)}</b>` : "plus rien d'horodaté"} · habitudes ${hc.done}/${hc.total}</p></div>
+      <div class="hx-hello is-tight"><h1>Lundi 5 octobre</h1><p>${today.length} tâches aujourd'hui · <span class="hx-red">${late.length} en retard</span> · ${next ? `ensuite <b>${fmt(next.h0)} ${e(next.label)}</b>` : "plus rien d'horodaté"} · habitudes ${hcnt.done}/${hcnt.total}</p></div>
       <div class="hx-grid">
         <section class="hx-tile hx-t-day">${tileHead(`Journée <small>${tc.done}/${tc.total} tâches</small>`, "journee")}<div class="hx-dayin"><div class="hx-mini">${cadran(TODAY, 170, true)}</div><ul class="hx-list">${today.map((t) => trow(t)).join("")}</ul></div></section>
         <section class="hx-tile hx-t-late">${tileHead(`À rattraper <span class="hx-red">${late.length}</span>`, "planning")}<ul class="hx-list">${late.map((t) => trow(t)).join("")}</ul></section>
         <section class="hx-tile hx-t-body">${tileHead("Corps", "corps", chooserBtn("tile"))}<div class="hx-kpis is-2">${[...S.metrics.tile].slice(0, 4).map((k) => kpi(k)).join("")}</div>
           <div class="hx-hstrip">${Array.from({ length: 7 }, (_, i) => K.addDays(TODAY, i - 6)).map((x) => `<span class="${x === TODAY ? "is-today" : ""}" title="${K.dateShort(x)} · ${count(x).done}/${count(x).total}">${pixel(x, 5, 1)}<small>${K.dayShort(x).slice(0, 2)}</small></span>`).join("")}</div></section>
-        <section class="hx-tile hx-t-week">${tileHead("Semaine", "planning")}${miniWeek()}</section>
+        <section class="hx-tile hx-t-week">${tileHead("Semaine", "planning", gstyleSeg(true))}${miniWeek()}</section>
         <section class="hx-tile hx-t-proj">${tileHead("Projets", "projets")}<ul class="hx-plmini">${D.projects.map((p) => { const s = K.projectStats(p.id); return `<li><button type="button" data-nav="projets" data-project="${p.id}"><i style="background:${p.color}"></i>${e(p.name)}</button><span class="hx-bar"><i style="width:${s.progress}%;background:${p.color}"></i></span><span class="hx-num">${s.progress} %</span><span class="hx-num ${s.late ? "hx-red" : "hx-dim"}">${s.late ? s.late + " ret." : "—"}</span></li>`; }).join("")}</ul></section>
         <section class="hx-tile hx-t-money">${tileHead(`Argent <small>${D.budget.month}</small>`, "argent")}<div class="hx-mstrip">
           <div><small>Reste à dépenser</small><b>${K.euro(bp.left)}</b><span class="hx-dim">${K.euro(bp.perDay)}/jour</span></div>
@@ -444,11 +489,11 @@
     const GROUPS = [["projet", "Projet"], ["dossier", "Dossier"], ["responsable", "Responsable"], ["statut", "Statut"]];
     return `<main class="hx-main" data-scroll>
       <div class="hx-hello hx-row"><div><h1>Planning</h1></div>${zoomBar(r, "planning")}
-        <div class="hx-opts"><span>Grouper par</span><div class="hx-seg is-sm">${GROUPS.map(([id, l]) => `<button type="button" data-group="${id}" aria-pressed="${S.pgroup === id}">${l}</button>`).join("")}</div><label><input type="checkbox" data-show="corps" ${S.show.corps ? "checked" : ""}> Corps</label><label><input type="checkbox" data-show="argent" ${S.show.argent ? "checked" : ""}> Argent</label></div></div>
+        <div class="hx-opts"><span>Grouper par</span><div class="hx-seg is-sm">${GROUPS.map(([id, l]) => `<button type="button" data-group="${id}" aria-pressed="${S.pgroup === id}">${l}</button>`).join("")}</div>${gstyleSeg()}<label><input type="checkbox" data-show="corps" ${S.show.corps ? "checked" : ""}> Corps</label><label><input type="checkbox" data-show="argent" ${S.show.argent ? "checked" : ""}> Argent</label></div></div>
       ${filterBar("planning", ts.length)}
       <div class="hx-tile hx-tl">
         <div class="hx-tlhead"><span class="hx-tlcap">${GROUPS.find((g) => g[0] === S.pgroup)[1]}</span><div class="hx-tltrack">${ticks(r).map((k) => `<span class="hx-tick ${k.major ? "is-major" : ""} ${r.zoom === "semaine" && k.iso === TODAY ? "is-today" : ""}" style="left:${tx(r, k.iso)}%">${k.label}</span>`).join("")}</div></div>
-        ${lanes.map((l) => { const col = S.collapsed.has(l.id), late = l.tasks.filter(K.isLate).length, pk = pack(l.tasks, r); const sum = col ? (() => { const a = Math.max(0, tx(r, l.tasks.reduce((m, t) => (t.start < m ? t.start : m), "9999"))), b = Math.min(100, tx(r, K.addDays(l.tasks.reduce((m, t) => (t.end > m ? t.end : m), "0000"), 1))); return `<span class="hx-lsum" style="left:${a}%;width:${b - a}%;--c:${l.color}"></span>`; })() : ""; return `<div class="hx-lane ${col ? "is-col" : ""}"><button type="button" class="hx-lh" style="--c:${l.color}" data-collapse="${l.id}" aria-expanded="${!col}"><b><span class="hx-chev">${col ? "▸" : "▾"}</span>${e(l.label)}</b><small>${l.tasks.length} tâche${l.tasks.length > 1 ? "s" : ""}${late ? ` · <em>${late} en retard</em>` : ""}${l.project ? ` · <span class="hx-open" data-nav="projets" data-project="${l.project}">ouvrir</span>` : ""}</small></button><div class="hx-ltrack" style="height:${col ? 22 : pk.rows * ROWH + 6}px">${gridLines(r)}${col ? sum : pk.items.map((it) => lineItem(it, r)).join("")}</div></div>`; }).join("") || `<p class="hx-empty">Aucune tâche ne correspond aux filtres sur cette période.</p>`}
+        ${lanes.map((l) => { const col = S.collapsed.has(l.id), late = l.tasks.filter(K.isLate).length, pk = pack(l.tasks, r); const sum = col ? (() => { const a = Math.max(0, tx(r, l.tasks.reduce((m, t) => (t.start < m ? t.start : m), "9999"))), b = Math.min(100, tx(r, K.addDays(l.tasks.reduce((m, t) => (t.end > m ? t.end : m), "0000"), 1))); return `<span class="hx-lsum" style="left:${a}%;width:${b - a}%;--c:${l.color}"></span>`; })() : ""; return `<div class="hx-lane ${col ? "is-col" : ""}" ${l.project ? `data-lane-project="${l.project}"` : ""}><button type="button" class="hx-lh" style="--c:${l.color}" data-collapse="${l.id}" aria-expanded="${!col}"><b><span class="hx-chev">${col ? "▸" : "▾"}</span>${e(l.label)}</b><small>${l.tasks.length} tâche${l.tasks.length > 1 ? "s" : ""}${late ? ` · <em>${late} en retard</em>` : ""}${l.project ? ` · <span class="hx-open" data-nav="projets" data-project="${l.project}">ouvrir</span>` : ""}</small></button><div class="hx-ltrack" data-rs="${r.start}" data-rn="${r.span}" style="height:${col ? 22 : pk.rows * ROWH + 6}px">${gridLines(r)}${col ? sum : pk.items.map((it) => lineItem(it, r)).join("")}</div></div>`; }).join("") || `<p class="hx-empty">Aucune tâche ne correspond aux filtres sur cette période.</p>`}
         ${lifeLanes(r)}
       </div>
       <p class="hx-legend2"><span><i class="lg-line"></i>en cours</span><span><i class="lg-line is-s1"></i>à planifier</span><span><i class="lg-line is-s2"></i>attente tiers</span><span><i class="lg-line is-done"></i>terminée</span><span><i class="lg-ms"></i>jalon</span><span><i class="lg-over"></i>retard depuis l'échéance</span><span><i class="lg-today"></i>aujourd'hui</span><span>Glisser une ligne la replanifie ; la glisser vers une autre portée change son projet.</span></p>
@@ -474,9 +519,9 @@
       const ghost = b && (t.milestone ? gx < 0 || gx > 100 : tx(r, K.addDays(b.end, 1)) < 0 || tx(r, b.start) > 100) ? "" : b ? (t.milestone ? `<i class="hx-gms" style="left:${gx}%"></i>` : `<i class="hx-ghost" style="left:${Math.max(0, tx(r, b.start))}%;width:${Math.max(.3, Math.min(100, tx(r, K.addDays(b.end, 1))) - Math.max(0, tx(r, b.start)))}%"></i>`) : "";
       const ce = tx(r, K.addDays(b ? b.end : t.end, 1)), c0 = Math.max(0, Math.min(ce, a1)), c1 = Math.min(100, Math.max(ce, a1));
       const conn = b && d && c1 > c0 ? `<i class="hx-conn ${d > 0 ? "is-late" : "is-early"}" style="left:${c0}%;width:${c1 - c0}%"></i>` : "";
-      const bar = t.milestone ? `<i class="hx-pms" style="left:${a0}%;--c:${p.color}"></i>` : `<i class="hx-pbar is-${t.statusId} ${K.isDone(t) ? "is-done" : ""}" style="left:${Math.max(0, a0)}%;width:${Math.max(.35, Math.min(100, a1) - Math.max(0, a0))}%;--c:${p.color}"></i>`;
+      const bar = projBar(t, r, a0, a1, p.color);
       const over = K.isLate(t) ? `<span class="hx-over" style="left:${Math.max(0, a1)}%;width:${Math.max(0, Math.min(100, tx(r, TODAY)) - Math.max(0, a1))}%;top:7px"></span>` : "";
-      return `<div class="hx-prw ${S.taskId === t.id ? "is-sel" : ""} ${K.isDone(t) ? "is-done" : ""}"><span class="hx-gname">${chk(t)}<button type="button" data-task="${t.id}">${t.milestone ? "◆ " : ""}${e(t.title)}</button></span><span class="hx-dim">${K.initials(t.assignee)}</span><span class="hx-num">${K.dateShort(t.start)}</span><span class="hx-num ${K.isLate(t) ? "hx-red" : ""}">${K.dateShort(t.end)}</span><span class="hx-num hx-dim">${b ? K.dateShort(b.end) : "—"}</span><span class="hx-num">${dcell(d)}</span><div class="hx-ptl" data-task="${t.id}">${gridLines(r)}${ghost}${conn}${bar}${over}</div></div>`;
+      return `<div class="hx-prw ${S.taskId === t.id ? "is-sel" : ""} ${K.isDone(t) ? "is-done" : ""}"><span class="hx-gname">${chk(t)}<button type="button" data-task="${t.id}">${t.milestone ? "◆ " : ""}${e(t.title)}</button></span><span class="hx-dim">${K.initials(t.assignee)}</span><span class="hx-num">${K.dateShort(t.start)}</span><span class="hx-num ${K.isLate(t) ? "hx-red" : ""}">${K.dateShort(t.end)}</span><span class="hx-num hx-dim">${b ? K.dateShort(b.end) : "—"}</span><span class="hx-num">${dcell(d)}</span><div class="hx-ptl" data-rs="${r.start}" data-rn="${r.span}">${gridLines(r)}${ghost}${conn}${bar}${over}</div></div>`;
     }).join("");
     return `<main class="hx-main hx-projets" data-scroll><nav class="hx-plist" aria-label="Projets">${D.folders.map((fo) => `<h3>${e(fo.name)}</h3>${D.projects.filter((q) => q.folderId === fo.id).map((q) => { const s = K.projectStats(q.id); return `<button type="button" data-nav="projets" data-project="${q.id}" aria-current="${q.id === p.id}"><i style="background:${q.color}"></i><span>${e(q.name)}</span><small>${s.open}${s.late ? ` · <em>${s.late}</em>` : ""}</small></button>`; }).join("")}`).join("")}</nav>
       <div class="hx-pmain"><div class="hx-hello hx-row"><div><p class="hx-crumb">${e(f.name)} › ${e(p.name)}</p><h1 style="--c:${p.color}" class="hx-ptitle">${e(p.name)}</h1></div>
@@ -484,7 +529,7 @@
         <button type="button" class="hx-btn is-primary" data-new>+ Tâche</button></div>
         <section class="hx-tile hx-cmp"><div class="hx-cmpl"><span>Comparer à</span><div class="hx-seg is-sm">${CMP.map(([id, l]) => `<button type="button" data-cmp="${id}" aria-pressed="${cmp === id}">${l}</button>`).join("")}</div><button type="button" class="hx-more is-plain">Figer une nouvelle référence</button></div>
           ${cmp === "none" ? `<p class="hx-dim">Choisissez une référence pour voir les glissements de dates.</p>` : `<div class="hx-cmpk"><div><small>Fin du projet</small><b>${K.dateShort(endNow)}</b><span>${cmp === "ref" ? "réf." : "initial"} ${K.dateShort(endRef)} · ${dcell(K.days(endRef, endNow))}</span></div><div><small>Tâches glissées</small><b class="${slip ? "hx-red" : ""}">${slip}</b><span>sur ${ds.length} comparées</span></div><div><small>En avance</small><b class="${early ? "hx-green" : ""}">${early}</b><span>${stable} à l'heure</span></div><div><small>Dérive moyenne</small><b>${avg > 0 ? "+" : ""}${avg.toFixed(1).replace(".", ",")} j</b><span>sur la date de fin</span></div><div class="hx-cmpbar">${ds.slice().sort((a, b) => b - a).map((d) => `<i class="${d > 0 ? "is-late" : d < 0 ? "is-early" : ""}" style="height:${Math.min(100, 12 + Math.abs(d) * 4)}%" title="${d > 0 ? "+" : ""}${d} j"></i>`).join("")}</div></div>`}</section>
-        <div class="hx-pbarrow">${zoomBar(r, "projets", ["mois", "trimestre", "annee", "pluri"])}</div>
+        <div class="hx-pbarrow">${zoomBar(r, "projets", ["mois", "trimestre", "annee", "pluri"])}${gstyleSeg()}</div>
         ${filterBar("projets", ts.length, { hide: ["projects"] })}
         <div class="hx-tile hx-pgantt"><div class="hx-prw hx-prh"><span>Tâche</span><span>Resp.</span><span>Début</span><span>Fin</span><span>${cmp === "initial" ? "Initiale" : "Réf."}</span><span>Dérive</span><div class="hx-ptl">${sparse(ticks(r), 7).map((k) => `<b class="hx-tick ${k.major ? "is-major" : ""}" style="left:${tx(r, k.iso)}%">${k.label}</b>`).join("")}</div></div>${rows || `<p class="hx-empty">Aucune tâche ne correspond aux filtres.</p>`}</div>
         <p class="hx-legend2"><span><i class="lg-line"></i>dates actuelles</span><span><i class="lg-ghost"></i>${cmp === "initial" ? "plan initial" : "référence"}</span><span><i class="lg-conn"></i>glissement</span><span><i class="lg-over"></i>retard</span><span>Budget, documents, équipe et journal : « Fiche projet ».</span></p>
@@ -517,59 +562,97 @@
     for (let i = 0; i < pts.length - 1; i++) { const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2; d += ` C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)} ${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(1)} ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)} ${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`; }
     return d;
   }
-  // Courbe de mesure : bande min–max glissante (7 j), moyenne mobile (7 j),
-  // valeurs du jour, zones et objectif ; dernière valeur mise en avant.
-  function metricChart(vals, dates, o) {
-    const W = 1240, H = o.h || 96, L = 6, R = 70, T = 10, B = 18, n = vals.length;
-    const lo = Math.min(...vals, o.goal ?? Infinity, o.min ?? Infinity), hi = Math.max(...vals, o.goal ?? -Infinity, o.max ?? -Infinity), pad = (hi - lo) * .12 || 1;
-    const y0 = lo - pad, y1 = hi + pad, X = (i) => L + (i / Math.max(1, n - 1)) * (W - L - R), Y = (v) => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
-    let s = `<svg class="hx-mc" viewBox="0 0 ${W} ${H}" role="img" aria-label="${e(o.label)} sur ${n} jours">`;
-    (o.zones || []).forEach(([a, b, c]) => { const ya = Y(Math.min(b, y1)), yb = Y(Math.max(a, y0)); if (yb > ya) s += `<rect x="${L}" y="${ya.toFixed(1)}" width="${W - L - R}" height="${(yb - ya).toFixed(1)}" fill="${c}" opacity=".07"/>`; });
-    for (let i = 0; i < n; i += Math.max(1, Math.round(n / 7))) s += `<line x1="${X(i).toFixed(1)}" y1="${T}" x2="${X(i).toFixed(1)}" y2="${H - B}" stroke="#eef1f5"/><text x="${X(i).toFixed(1)}" y="${H - 4}" class="hx-mct" text-anchor="${i === 0 ? "start" : "middle"}">${K.dateShort(dates[i])}</text>`;
-    if (o.goal != null) s += `<line x1="${L}" y1="${Y(o.goal).toFixed(1)}" x2="${W - R}" y2="${Y(o.goal).toFixed(1)}" stroke="${o.color}" stroke-dasharray="4 4" opacity=".55"/><text x="${W - R + 6}" y="${(Y(o.goal) + 4).toFixed(1)}" class="hx-mct">obj. ${o.fmt(o.goal)}</text>`;
-    if (o.mode === "bars") {
-      const bw = Math.max(2, Math.min(14, (W - L - R) / n * .55));
-      vals.forEach((v, i) => { const ok = o.goal != null && v >= o.goal; s += `<rect x="${(X(i) - bw / 2).toFixed(1)}" y="${Y(v).toFixed(1)}" width="${bw.toFixed(1)}" height="${(Y(y0) - Y(v)).toFixed(1)}" rx="${bw / 2}" fill="${o.color}" opacity="${ok ? .9 : .38}"><title>${K.dateShort(dates[i])} · ${o.fmt(v)}</title></rect>`; });
+  // Regroupement des jours : jour, semaine (lundi) ou mois civil.
+  const monday = (iso) => { const w = new Date(iso + "T12:00:00Z").getUTCDay() || 7; return K.addDays(iso, 1 - w); };
+  function buckets(n, mode) {
+    const off = SERIES.dates.length - n, out = [];
+    SERIES.dates.slice(-n).forEach((d, i) => {
+      const k = mode === "semaine" ? monday(d) : mode === "mois" ? d.slice(0, 7) : d;
+      if (!out.length || out[out.length - 1].key !== k) out.push({ key: k, start: d, idx: [] });
+      out[out.length - 1].idx.push(off + i); out[out.length - 1].end = d;
+    });
+    return out;
+  }
+  const bucketLabel = (b, mode) => (mode === "semaine" ? `S${isoWeek(b.start)}` : mode === "mois" ? MOIS_C[Number(b.key.slice(5, 7)) - 1] : K.dateShort(b.start));
+  const bucketTitle = (b, mode) => (mode === "semaine" ? `Semaine ${isoWeek(b.start)} · du ${K.dateShort(b.start)} au ${K.dateShort(b.end)}` : mode === "mois" ? `${MOIS_C[Number(b.key.slice(5, 7)) - 1]} ${b.key.slice(0, 4)}${b.idx.length < 28 ? " (partiel)" : ""}` : `${K.dayName(b.start)} ${K.dateShort(b.start)}`);
+  // Courbe de mesure avec faisceau de variation : en vue Jour, moyenne et
+  // min–max glissants sur 7 jours ; en Semaine ou Mois, moyenne et min–max
+  // de chaque période. Points = valeur du jour ou moyenne de la période.
+  function metricChart(k, n, mode, m) {
+    const B = buckets(n, mode), raw = SERIES[k];
+    let pts, lo, hi, line;
+    if (mode === "jour") { pts = B.map((b) => raw[b.idx[0]]); lo = roll(pts, 7, (a) => Math.min(...a)); hi = roll(pts, 7, (a) => Math.max(...a)); line = roll(pts, 7, mean); }
+    else { pts = B.map((b) => mean(b.idx.map((i) => raw[i]))); lo = B.map((b) => Math.min(...b.idx.map((i) => raw[i]))); hi = B.map((b) => Math.max(...b.idx.map((i) => raw[i]))); line = pts; }
+    const W = 1240, H = m.h || 104, L = 6, R = 78, T = 12, Bm = 20, cnt = pts.length;
+    const all = [...lo, ...hi, m.goal ?? lo[0]], y0v = Math.min(...all), y1v = Math.max(...all), pad = (y1v - y0v) * .12 || 1;
+    const lov = m.min != null ? Math.max(m.min, y0v - pad) : y0v - pad, hiv = m.max != null ? Math.min(m.max, y1v + pad) : y1v + pad;
+    const X = (i) => L + (cnt > 1 ? i / (cnt - 1) : .5) * (W - L - R), Y = (v) => T + (1 - (v - lov) / (hiv - lov || 1)) * (H - T - Bm);
+    let s = `<svg class="hx-mc" viewBox="0 0 ${W} ${H}" role="img" aria-label="${e(m.label)}">`;
+    (m.zones || []).forEach(([a, b, c]) => { const ya = Y(Math.min(b, hiv)), yb = Y(Math.max(a, lov)); if (yb > ya) s += `<rect x="${L}" y="${ya.toFixed(1)}" width="${W - L - R}" height="${(yb - ya).toFixed(1)}" fill="${c}" opacity=".06"/>`; });
+    const every = Math.max(1, Math.ceil(cnt / 9));
+    for (let i = 0; i < cnt; i += every) s += `<line x1="${X(i).toFixed(1)}" y1="${T}" x2="${X(i).toFixed(1)}" y2="${H - Bm}" stroke="#eef1f5"/><text x="${X(i).toFixed(1)}" y="${H - 5}" class="hx-mct" text-anchor="${i === 0 ? "start" : "middle"}">${bucketLabel(B[i], mode)}</text>`;
+    if (m.goal != null) s += `<line x1="${L}" y1="${Y(m.goal).toFixed(1)}" x2="${W - R}" y2="${Y(m.goal).toFixed(1)}" stroke="${m.color}" stroke-dasharray="4 4" opacity=".55"/><text x="${W - R + 6}" y="${(Y(m.goal) + 4).toFixed(1)}" class="hx-mct">obj. ${m.fmt(m.goal)}</text>`;
+    if (m.mode === "bars") {
+      const bw = Math.max(2, Math.min(18, (W - L - R) / cnt * .6));
+      pts.forEach((v, i) => { const ok = m.goal != null && v >= m.goal; s += `<rect x="${(X(i) - bw / 2).toFixed(1)}" y="${Y(v).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, Y(lov) - Y(v)).toFixed(1)}" rx="${Math.min(4, bw / 2)}" fill="${m.color}" opacity="${ok ? .9 : .4}" data-tip="${e(`${bucketTitle(B[i], mode)}|${m.label} : ${m.fmt(v)}${mode !== "jour" ? " par jour en moyenne" : ""}${m.goal != null ? (ok ? " · objectif atteint" : " · sous l'objectif") : ""}`)}"/>`; });
     } else {
-      const mn = roll(vals, 7, (a) => Math.min(...a)), mx = roll(vals, 7, (a) => Math.max(...a));
-      const top = mx.map((v, i) => [X(i), Y(v)]), bot = mn.map((v, i) => [X(i), Y(v)]).reverse();
-      s += `<path d="${smooth(top)} L${bot.map((p) => p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" L")} Z" fill="${o.color}" opacity=".09"/>`;
-      if (o.mode === "area") s += `<path d="${smooth(vals.map((v, i) => [X(i), Y(v)]))} L${X(n - 1)} ${Y(y0)} L${X(0)} ${Y(y0)} Z" fill="${o.color}" opacity=".10"/>`;
-      vals.forEach((v, i) => { s += `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${n > 40 ? 1.5 : 2.6}" fill="${o.dotColor ? o.dotColor(v) : o.color}" opacity="${o.dotColor ? .9 : .45}"><title>${K.dateShort(dates[i])} · ${o.fmt(v)}</title></circle>`; });
-      s += `<path d="${smooth(roll(vals, 7, mean).map((v, i) => [X(i), Y(v)]))}" fill="none" stroke="${o.color}" stroke-width="2.2" stroke-linecap="round"/>`;
+      s += `<path d="${smooth(hi.map((v, i) => [X(i), Y(v)]))} L${lo.map((v, i) => [X(i), Y(v)]).reverse().map((p) => p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" L")} Z" fill="${m.color}" opacity=".11"/>`;
+      if (m.mode === "area") s += `<path d="${smooth(line.map((v, i) => [X(i), Y(v)]))} L${X(cnt - 1)} ${Y(lov)} L${X(0)} ${Y(lov)} Z" fill="${m.color}" opacity=".07"/>`;
+      s += `<path d="${smooth(line.map((v, i) => [X(i), Y(v)]))}" fill="none" stroke="${m.color}" stroke-width="2.2" stroke-linecap="round"/>`;
+      pts.forEach((v, i) => { s += `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${cnt > 60 ? 1.6 : 3}" fill="${m.dotColor ? m.dotColor(v) : m.color}" opacity="${m.dotColor ? .9 : .5}"/><rect x="${(X(i) - (W - L - R) / cnt / 2).toFixed(1)}" y="${T}" width="${((W - L - R) / Math.max(1, cnt)).toFixed(1)}" height="${H - T - Bm}" fill="transparent" data-tip="${e(`${bucketTitle(B[i], mode)}|${m.label} : ${m.fmt(v)}${mode !== "jour" ? " (moyenne)" : ""}|Faisceau : ${m.fmt(lo[i])} → ${m.fmt(hi[i])}${mode === "jour" ? " sur 7 jours" : ""}`)}"/>`; });
     }
-    const lv = vals[n - 1];
-    s += `<circle cx="${X(n - 1)}" cy="${Y(lv).toFixed(1)}" r="4.5" fill="#fff" stroke="${o.dotColor ? o.dotColor(lv) : o.color}" stroke-width="2.4"/><text x="${X(n - 1) + 10}" y="${(Y(lv) + 4).toFixed(1)}" class="hx-mcv">${o.fmt(lv)}</text>`;
-    return s + "</svg>";
+    const lv = pts[cnt - 1];
+    s += `<circle cx="${X(cnt - 1)}" cy="${Y(lv).toFixed(1)}" r="4.5" fill="#fff" stroke="${m.dotColor ? m.dotColor(lv) : m.color}" stroke-width="2.4" pointer-events="none"/><text x="${X(cnt - 1) + 10}" y="${(Y(lv) + 4).toFixed(1)}" class="hx-mcv">${m.fmt(lv)}</text>`;
+    return { svg: s + "</svg>", pts };
   }
 
   // ---------------------------------------------------------------- corps
   const MDEF = {
-    recovery: { label: "Récupération", unit: "%", color: "#16a34a", fmt: (v) => Math.round(v) + " %", zones: [[0, 33, "#dc2626"], [34, 66, "#e0a21b"], [67, 100, "#16a34a"]], dotColor: zoneColor, min: 0, max: 100 },
-    sleep: { label: "Sommeil réel", unit: "h", color: "#5b7bd8", fmt: (v) => v.toFixed(1).replace(".", ",") + " h", goal: 8, mode: "area" },
-    hrv: { label: "HRV", unit: "ms", color: "#0f9d76", fmt: (v) => Math.round(v) + " ms" },
-    restingHr: { label: "FC repos", unit: "bpm", color: "#d64545", fmt: (v) => Math.round(v) + " bpm", invert: true },
-    weight: { label: "Poids", unit: "kg", color: "#475569", fmt: (v) => v.toFixed(1).replace(".", ",") + " kg", invert: true },
-    steps: { label: "Pas", unit: "", color: "#7c5cd6", fmt: (v) => (v / 1000).toFixed(1).replace(".", ",") + " k", goal: 10000, mode: "bars" },
+    recovery: { label: "Récupération", color: "#16a34a", fmt: (v) => Math.round(v) + " %", zones: [[0, 33, "#dc2626"], [34, 66, "#e0a21b"], [67, 100, "#16a34a"]], dotColor: zoneColor, min: 0, max: 100 },
+    sleep: { label: "Sommeil réel", color: "#5b7bd8", fmt: (v) => v.toFixed(1).replace(".", ",") + " h", goal: 8, mode: "area" },
+    hrv: { label: "HRV", color: "#0f9d76", fmt: (v) => Math.round(v) + " ms" },
+    restingHr: { label: "FC repos", color: "#d64545", fmt: (v) => Math.round(v) + " bpm", invert: true },
+    weight: { label: "Poids", color: "#475569", fmt: (v) => v.toFixed(1).replace(".", ",") + " kg", invert: true },
+    steps: { label: "Pas", color: "#7c5cd6", fmt: (v) => (v / 1000).toFixed(1).replace(".", ",") + " k", goal: 10000, mode: "bars" },
   };
   const CSECT = [["recup", "Récupération et sommeil", ["recovery", "sleep"]], ["cardio", "Cardio", ["hrv", "restingHr"]], ["comp", "Composition corporelle", ["weight"]], ["act", "Activité et sport", ["steps", "sport"]], ["hab", "Habitudes", []]];
+  const AGG = [["jour", "Jour"], ["semaine", "Semaine"], ["mois", "Mois"]];
+  const PERIODS = [[14, "14 j"], [30, "30 j"], [90, "90 j"], [365, "1 an"]];
   function metricRow(k, n) {
-    const m = MDEF[k], vals = SERIES[k].slice(-n), dates = SERIES.dates.slice(-n), last = vals[n - 1], av = mean(vals), delta = (last - av) / av * 100;
+    const m = MDEF[k], ch = metricChart(k, n, S.cagg, m), raw = SERIES[k].slice(-n), last = raw[n - 1], av = mean(raw), delta = (last - av) / av * 100;
     const good = m.invert ? delta < 0 : delta > 0;
-    return `<div class="hx-mrow2"><div class="hx-mhd"><small>${m.label}</small><b>${m.fmt(last)}</b><span class="${Math.abs(delta) < 2 ? "hx-dim" : good ? "hx-green" : "hx-red"}">${delta >= 0 ? "↑" : "↓"} ${Math.abs(delta).toFixed(0)} % vs moyenne ${n} j</span><span class="hx-dim">moy. ${m.fmt(av)} · min ${m.fmt(Math.min(...vals))} · max ${m.fmt(Math.max(...vals))}</span></div>${metricChart(vals, dates, m)}</div>`;
+    return `<div class="hx-mrow2"><div class="hx-mhd"><small>${m.label}</small><b>${m.fmt(last)}</b><span class="${Math.abs(delta) < 2 ? "hx-dim" : good ? "hx-green" : "hx-red"}">${delta >= 0 ? "↑" : "↓"} ${Math.abs(delta).toFixed(0)} % vs moyenne</span><span class="hx-dim">moy. ${m.fmt(av)} · min ${m.fmt(Math.min(...raw))} · max ${m.fmt(Math.max(...raw))}</span></div>${ch.svg}</div>`;
   }
+  // Sport : heures empilées par discipline, par jour, semaine ou mois ;
+  // objectif proportionné à la période ; total au-dessus de chaque pile.
   function sportBlock(n) {
-    const weeks = Math.max(2, Math.round(n / 7)), mon = (iso) => { const w = new Date(iso + "T12:00:00Z").getUTCDay() || 7; return K.addDays(iso, 1 - w); };
-    const w0 = mon(K.addDays(TODAY, -(weeks - 1) * 7)), rows = Array.from({ length: weeks }, (_, i) => K.addDays(w0, i * 7));
-    const data = rows.map((w) => { const by = {}; SESSIONS.filter((x) => x.date >= w && x.date < K.addDays(w, 7)).forEach((x) => (by[x.sport] = (by[x.sport] || 0) + x.minutes)); return { w, by, tot: Object.values(by).reduce((a, b) => a + b, 0) }; });
-    const W = 1240, H = 150, L = 6, R = 70, T = 10, B = 20, max = Math.max(D.sport.goalHours * 60 * 1.25, ...data.map((d) => d.tot)), bw = (W - L - R) / weeks * .56;
-    let s = `<svg class="hx-mc" viewBox="0 0 ${W} ${H}" role="img" aria-label="Heures de sport par semaine">`;
-    const Y = (m) => T + (1 - m / max) * (H - T - B);
-    s += `<line x1="${L}" x2="${W - R}" y1="${Y(D.sport.goalHours * 60)}" y2="${Y(D.sport.goalHours * 60)}" stroke="#0e7490" stroke-dasharray="4 4" opacity=".6"/><text x="${W - R + 6}" y="${Y(D.sport.goalHours * 60) + 4}" class="hx-mct">obj. ${D.sport.goalHours} h</text>`;
-    data.forEach((d, i) => { const x = L + (i + .5) * (W - L - R) / weeks - bw / 2; let y = Y(0); Object.keys(SPORT_COL).forEach((k) => { const v = d.by[k] || 0; if (!v) return; const h = Y(0) - Y(v); y -= h; s += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${(h - 1).toFixed(1)}" rx="3" fill="${SPORT_COL[k]}"><title>${k} · ${K.hm(v)}</title></rect>`; }); s += `<text x="${(x + bw / 2).toFixed(1)}" y="${H - 5}" class="hx-mct" text-anchor="middle">S${isoWeek(d.w)}</text>${d.tot ? `<text x="${(x + bw / 2).toFixed(1)}" y="${(y - 5).toFixed(1)}" class="hx-mct" text-anchor="middle">${(d.tot / 60).toFixed(1).replace(".", ",")} h</text>` : ""}`; });
-    s += "</svg>";
-    const sw = K.sportWeek(), recent = SESSIONS.slice(-6).reverse();
-    return `<div class="hx-mrow2"><div class="hx-mhd"><small>Sport</small><b>${K.hm(sw.done)} <span class="hx-dim">/ ${D.sport.goalHours} h</span></b><span class="hx-dim">cette semaine · semaine dernière ${K.hm(sw.last)}</span><span class="hx-sleg">${Object.entries(SPORT_COL).map(([k, c]) => `<span><i style="background:${c}"></i>${k}</span>`).join("")}</span></div>${s}</div>
+    const mode = S.sagg, first = SERIES.dates[SERIES.dates.length - n];
+    const B = buckets(n, mode).map((b) => { const by = {}; SESSIONS.filter((x) => x.date >= b.start && x.date <= b.end).forEach((x) => (by[x.sport] = (by[x.sport] || 0) + x.minutes)); return { ...b, by, tot: Object.values(by).reduce((a, c) => a + c, 0) }; });
+    const goalOf = (b) => D.sport.goalHours * 60 * (mode === "jour" ? 1 / 7 : mode === "semaine" ? 1 : b.idx.length / 7);
+    const W = 1240, H = 170, L = 6, R = 78, T = 18, Bm = 22, cnt = B.length, max = Math.max(...B.map(goalOf), ...B.map((b) => b.tot)) * 1.12 || 60;
+    const slot = (W - L - R) / cnt, bw = Math.max(2, Math.min(34, slot * .62)), Y = (m) => T + (1 - m / max) * (H - T - Bm);
+    let s = `<svg class="hx-mc" viewBox="0 0 ${W} ${H}" role="img" aria-label="Heures de sport par ${mode}"><defs>`;
+    B.forEach((b, i) => { if (!b.tot) return; const x = L + (i + .5) * slot - bw / 2, y = Y(b.tot), r = Math.min(4, bw / 2), h = Y(0) - y; s += `<clipPath id="spk-${i}"><path d="M${x} ${Y(0)} V${y + r} Q${x} ${y} ${x + r} ${y} H${x + bw - r} Q${x + bw} ${y} ${x + bw} ${y + r} V${Y(0)} Z"/></clipPath>`; });
+    s += `</defs>`;
+    [0, .5, 1].forEach((f) => { const v = max / 1.12 * f; s += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#eef1f5"/>`; });
+    if (mode !== "mois") s += `<line x1="${L}" x2="${W - R}" y1="${Y(goalOf(B[0]))}" y2="${Y(goalOf(B[0]))}" stroke="#0e7490" stroke-dasharray="4 4" opacity=".6"/><text x="${W - R + 6}" y="${Y(goalOf(B[0])) + 4}" class="hx-mct">obj. ${K.hm(Math.round(goalOf(B[0])))}</text>`;
+    const every = Math.max(1, Math.ceil(cnt / 14));
+    B.forEach((b, i) => {
+      const x = L + (i + .5) * slot - bw / 2;
+      if (mode === "mois") s += `<line x1="${x - 3}" x2="${x + bw + 3}" y1="${Y(goalOf(b))}" y2="${Y(goalOf(b))}" stroke="#0e7490" stroke-dasharray="3 3" opacity=".7"/>`;
+      if (b.tot) {
+        let y = Y(0);
+        s += `<g clip-path="url(#spk-${i})" data-tip="${e(`${bucketTitle(b, mode)}|Total : ${K.hm(b.tot)} sur un objectif de ${K.hm(Math.round(goalOf(b)))}|${Object.entries(b.by).map(([k, v]) => `${k} : ${K.hm(v)}`).join(" · ")}`)}">`;
+        Object.keys(SPORT_COL).forEach((k) => { const v = b.by[k] || 0; if (!v) return; const h = Y(0) - Y(v); y -= h; s += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${SPORT_COL[k]}" stroke="#fff" stroke-width="1.5"/>`; });
+        s += `<rect x="${x.toFixed(1)}" y="${Y(b.tot).toFixed(1)}" width="${bw.toFixed(1)}" height="${(Y(0) - Y(b.tot)).toFixed(1)}" fill="transparent"/></g>`;
+        if (cnt <= 26) s += `<text x="${(x + bw / 2).toFixed(1)}" y="${(Y(b.tot) - 6).toFixed(1)}" class="hx-mcl" text-anchor="middle">${(b.tot / 60).toFixed(1).replace(".", ",")} h</text>`;
+      }
+      if (i % every === 0) s += `<text x="${(x + bw / 2).toFixed(1)}" y="${H - 6}" class="hx-mct" text-anchor="middle">${bucketLabel(b, mode)}</text>`;
+    });
+    s += `<line x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}" stroke="#c9ccd1"/></svg>`;
+    const per = {}; SESSIONS.filter((x) => x.date >= first && x.date <= TODAY).forEach((x) => { per[x.sport] = per[x.sport] || { m: 0, n: 0 }; per[x.sport].m += x.minutes; per[x.sport].n++; });
+    const sw = K.sportWeek(), recent = SESSIONS.filter((x) => x.date <= TODAY).slice(-6).reverse();
+    return `<div class="hx-mrow2"><div class="hx-mhd"><small>Sport</small><b>${K.hm(sw.done)} <span class="hx-dim">/ ${D.sport.goalHours} h</span></b><span class="hx-dim">cette semaine · semaine dernière ${K.hm(sw.last)}</span><div class="hx-seg is-xs">${AGG.map(([id, l]) => `<button type="button" data-sagg="${id}" aria-pressed="${mode === id}">${l}</button>`).join("")}</div></div><div>${s}<div class="hx-sleg is-tot">${Object.keys(SPORT_COL).filter((k) => per[k]).map((k) => `<span><i style="background:${SPORT_COL[k]}"></i>${k} <b>${K.hm(per[k].m)}</b> · ${per[k].n} séance${per[k].n > 1 ? "s" : ""}</span>`).join("")}</div></div></div>
       <table class="hx-stab"><thead><tr><th>Date</th><th>Sport</th><th>Séance</th><th>Durée</th><th>Distance</th><th>D+</th><th>FC moy.</th></tr></thead><tbody>${D.sport.planned.slice(0, 1).map((x) => `<tr class="is-plan"><td>auj. ${x.time}</td><td><i style="background:${SPORT_COL[x.sport]}"></i>${x.sport}</td><td>${e(x.title)}</td><td>${K.hm(x.minutes)}</td><td colspan="3" class="hx-dim">prévue</td></tr>`).join("")}${recent.map((x) => `<tr><td>${K.dayShort(x.date)} ${K.dateShort(x.date)}</td><td><i style="background:${SPORT_COL[x.sport] || "#0e7490"}"></i>${e(x.sport)}</td><td>${e(x.title)}</td><td>${K.hm(x.minutes)}</td><td>${x.km ? String(x.km).replace(".", ",") + " km" : "—"}</td><td>${x.dplus ? x.dplus + " m" : "—"}</td><td>${x.hr ? x.hr + " bpm" : "—"}</td></tr>`).join("")}</tbody></table>`;
   }
   function habitGrid(n) {
@@ -580,7 +663,7 @@
       h += `<span class="hx-hgl is-theme" style="--c:${t.color}"><b>${e(t.name)}</b><small>${t.mode === "single" ? "un seul choix" : ""}</small></span>${days.map(() => "<span></span>").join("")}<span></span>`;
       t.habits.forEach((hb0) => {
         const hb = ALL.find((x) => x.id === hb0.id); let ok = 0, tot = 0;
-        h += `<span class="hx-hgl is-sub ${S.hot === hb.id ? "is-hot" : ""}" data-hp="${hb.id}">${e(hb.name)}</span>` + days.map((d) => { const st = hstate(hb, d); if (st.state !== "na") { tot++; if (st.state !== "todo") ok++; } return `<button type="button" class="hx-hc is-${st.state}" data-hab="${hb.id}|${d}|toggle" data-hp="${hb.id}" style="--c:${t.color};--f:${st.state === "part" ? st.value / hb.max : 1}" title="${e(hb.name)} · ${K.dateShort(d)}${st.value != null && hb.kind === "numeric" ? " · " + st.value + "/" + hb.max : ""}" aria-label="${e(hb.name)} le ${K.dateShort(d)}"></button>`; }).join("") + `<span class="hx-hgr">${tot ? Math.round(ok / tot * 100) : 0} %</span>`;
+        h += `<span class="hx-hgl is-sub ${S.hot === hb.id ? "is-hot" : ""}" data-hp="${hb.id}"><i class="hx-hdot" style="background:${hc(hb)}"></i>${e(hb.name)}</span>` + days.map((d) => { const st = hstate(hb, d); if (st.state !== "na") { tot++; if (st.state !== "todo") ok++; } return `<button type="button" class="hx-hc is-${st.state}" data-hab="${hb.id}|${d}|toggle" data-hp="${hb.id}" data-tip="${e(htip(hb, d))}" style="--c:${hc(hb)};--f:${st.state === "part" ? st.value / hb.max : 1}" aria-label="${e(hb.name)} le ${K.dateShort(d)}"></button>`; }).join("") + `<span class="hx-hgr">${tot ? Math.round(ok / tot * 100) : 0} %</span>`;
       });
     });
     return h + "</div>";
@@ -589,42 +672,50 @@
     const n = S.cper, sel = S.metrics.page;
     const summary = { recup: () => `récup. ${K.last(SERIES.recovery)} % · sommeil ${String(K.last(SERIES.sleep)).replace(".", ",")} h`, cardio: () => `HRV ${K.last(SERIES.hrv)} ms · FC ${K.last(SERIES.restingHr)} bpm`, comp: () => `${String(K.last(SERIES.weight)).replace(".", ",")} kg`, act: () => `${(K.last(SERIES.steps) / 1000).toFixed(1).replace(".", ",")} k pas · ${K.hm(K.sportWeek().done)} de sport`, hab: () => `${count(TODAY).done}/${count(TODAY).total} aujourd'hui` };
     return `<main class="hx-main hx-corps2" data-scroll>
-      <div class="hx-hello hx-row"><div><h1>Corps</h1><p>Récupération ${K.last(SERIES.recovery)} % ce matin. Points : valeur du jour · trait : moyenne sur 7 jours · bande claire : minimum et maximum sur 7 jours.</p></div>
-        <div class="hx-seg">${[14, 30, 90].map((p) => `<button type="button" data-cper="${p}" aria-pressed="${n === p}">${p} jours</button>`).join("")}</div><div class="hx-corpsbar">${chooserBtn("page")}</div></div>
+      <div class="hx-hello hx-row"><div><h1>Corps</h1><p>Récupération ${K.last(SERIES.recovery)} % ce matin. Trait : moyenne · faisceau : minimum et maximum (sur 7 jours glissants en vue Jour, dans chaque période sinon) · points : valeur du jour ou moyenne de la période.</p></div>
+        <div class="hx-opts"><span>Période</span><div class="hx-seg is-sm">${PERIODS.map(([p, l]) => `<button type="button" data-cper="${p}" aria-pressed="${n === p}">${l}</button>`).join("")}</div><span>Regrouper par</span><div class="hx-seg is-sm">${AGG.map(([id, l]) => `<button type="button" data-cagg="${id}" aria-pressed="${S.cagg === id}">${l}</button>`).join("")}</div></div><div class="hx-corpsbar">${chooserBtn("page")}</div></div>
       ${CSECT.map(([id, title, keys]) => {
         const open = !S.closed.has(id), shown = keys.filter((k) => sel.has(k));
         if (id !== "hab" && !shown.length) return "";
-        const body = id === "hab" ? habitGrid(Math.min(n, 30)) + (n > 30 ? `<p class="hx-hint">Habitudes limitées aux 30 derniers jours pour rester lisibles ; la vue Année de Habit Pixel reste disponible.</p>` : "") : shown.map((k) => (k === "sport" ? sportBlock(n) : metricRow(k, n))).join("");
+        const body = id === "hab" ? habitGrid(Math.min(n, 30)) + (n > 30 ? `<p class="hx-hint">Habitudes limitées aux 30 derniers jours pour rester lisibles ; les vues Semaine, Mois et Année de Habit Pixel restent disponibles.</p>` : "") : shown.map((k) => (k === "sport" ? sportBlock(n) : metricRow(k, n))).join("");
         return `<section class="hx-tile hx-csec ${open ? "" : "is-closed"}"><button type="button" class="hx-csh" data-csec="${id}" aria-expanded="${open}"><span class="hx-chev">${open ? "▾" : "▸"}</span><h2>${title}</h2><span class="hx-csum">${summary[id]()}</span></button>${open ? `<div class="hx-csb">${body}</div>` : ""}</section>`;
       }).join("")}
     </main>`;
   }
 
   // --------------------------------------------------------------- argent
-  // Sankey : colonnes de nœuds, hauteurs proportionnelles, liens en rubans.
-  function sankey(cols, links, o = {}) {
-    const W = o.w || 1500, H = o.h || 330, L = o.left || 190, R = o.right || 230, gap = 9, nw = 12;
-    const colX = cols.map((_, i) => L + i * (W - L - R - nw) / (cols.length - 1));
-    const tot = (n) => Math.max(links.filter((l) => l[0] === n).reduce((a, l) => a + l[2], 0), links.filter((l) => l[1] === n).reduce((a, l) => a + l[2], 0));
-    const maxCol = Math.max(...cols.map((c) => c.reduce((a, n) => a + tot(n[0]), 0) + (c.length - 1) * gap));
-    const k = (H - 10) / maxCol, pos = {};
-    cols.forEach((c, ci) => { let y = 5; c.forEach(([id, color, label]) => { const h = tot(id) * k; pos[id] = { x: colX[ci], y, h, color, label: label || id, out: y, in: y, ci }; y += h + gap; }); });
-    let s = `<svg class="hx-sk" viewBox="0 0 ${W} ${H}" role="img" aria-label="${e(o.label || "Diagramme de flux")}">`;
-    const off = new Map();
-    Object.keys(pos).forEach((id) => { const P = pos[id]; let y = P.y; links.filter((l) => l[0] === id).sort((l1, l2) => pos[l1[1]].y - pos[l2[1]].y).forEach((l) => { off.set(l, { out: y }); y += l[2] * k; }); y = P.y; links.filter((l) => l[1] === id).sort((l1, l2) => pos[l1[0]].y - pos[l2[0]].y).forEach((l) => { off.get(l).in = y; y += l[2] * k; }); });
-    links.forEach((l) => { const [a, b, v] = l, A = pos[a], Bn = pos[b], h = v * k, x0 = A.x + nw, x1 = Bn.x, y0 = off.get(l).out, y1 = off.get(l).in, cx = (x0 + x1) / 2; s += `<path d="M${x0} ${y0.toFixed(1)} C${cx} ${y0.toFixed(1)} ${cx} ${y1.toFixed(1)} ${x1} ${y1.toFixed(1)} L${x1} ${(y1 + h).toFixed(1)} C${cx} ${(y1 + h).toFixed(1)} ${cx} ${(y0 + h).toFixed(1)} ${x0} ${(y0 + h).toFixed(1)} Z" fill="${Bn.ci === cols.length - 1 ? Bn.color : A.color}" opacity=".28"><title>${e(A.label)} → ${e(Bn.label)} · ${K.euro(v)}</title></path>`; });
-    Object.values(pos).forEach((p) => { const last = p.ci === cols.length - 1, first = p.ci === 0; s += `<rect x="${p.x}" y="${p.y.toFixed(1)}" width="${nw}" height="${Math.max(1.5, p.h).toFixed(1)}" rx="2" fill="${p.color}"/><text x="${first ? p.x - 8 : p.x + nw + 8}" y="${(p.y + p.h / 2 + 4).toFixed(1)}" text-anchor="${first ? "end" : "start"}" class="hx-skl">${e(p.label)} <tspan class="hx-skv">${K.euro(tot(Object.keys(pos).find((id) => pos[id] === p)))}</tspan></text>`; });
-    (o.heads || []).forEach((h, i) => (s += ""));
-    return s + "</svg>";
-  }
-  const FLOWS = {
-    oct: { label: "Octobre 2026 · au 5", income: 3250, spent: 688, saved: 1000,
-      cols: [[["Salaire", "#2f855a"]], [["Compte courant", "#256d85"]], [["Courses", "#16a34a"], ["Maison", "#0284c7"], ["Restaurants", "#dc2626"], ["Transport", "#7c5cd6"], ["Abonnements", "#64748b"], ["Loisirs", "#d99a2b"], ["Épargne", "#0f766e"], ["Non dépensé", "#cbd5e1"]]],
-      links: [["Salaire", "Compte courant", 3250], ["Compte courant", "Courses", 210], ["Compte courant", "Maison", 150], ["Compte courant", "Restaurants", 112], ["Compte courant", "Transport", 96], ["Compte courant", "Abonnements", 60], ["Compte courant", "Loisirs", 60], ["Compte courant", "Épargne", 1000], ["Compte courant", "Non dépensé", 1562]] },
-    sept: { label: "Septembre 2026", income: 4535, spent: 2570, saved: 1500,
-      cols: [[["Salaire", "#2f855a"], ["Remboursements", "#73927e"], ["Activité pro", "#3f806f"]], [["Compte courant", "#256d85"], ["Compte pro", "#cf7856"]], [["Logement", "#475569"], ["Courses", "#16a34a"], ["Maison", "#0284c7"], ["Restaurants", "#dc2626"], ["Transport", "#7c5cd6"], ["Abonnements", "#64748b"], ["Loisirs", "#d99a2b"], ["Santé", "#db2777"], ["Charges pro", "#b45309"], ["Épargne", "#0f766e"], ["Non dépensé", "#cbd5e1"]]],
-      links: [["Salaire", "Compte courant", 3250], ["Remboursements", "Compte courant", 85], ["Activité pro", "Compte pro", 1200], ["Compte courant", "Logement", 950], ["Compte courant", "Courses", 430], ["Compte courant", "Maison", 210], ["Compte courant", "Restaurants", 140], ["Compte courant", "Transport", 160], ["Compte courant", "Abonnements", 85], ["Compte courant", "Loisirs", 190], ["Compte courant", "Santé", 45], ["Compte courant", "Épargne", 1000], ["Compte courant", "Non dépensé", 125], ["Compte pro", "Charges pro", 360], ["Compte pro", "Épargne", 500], ["Compte pro", "Non dépensé", 340]] },
+  // Données fictives au format lu par les graphiques de Nexora :
+  // Sankey mensuel (origine › comptes › destination, transferts internes exclus),
+  // Sankey de structure (type › banque › compte), budget cumulé par catégorie.
+  const CATCOL = { Logement: "#475569", Courses: "#16a34a", Maison: "#0284c7", Restaurants: "#dc2626", Transport: "#7c5cd6", Abonnements: "#64748b", Loisirs: "#d99a2b", Santé: "#db2777" };
+  const MONTHS = {
+    oct: { key: "2026-10", label: "Octobre 2026", ndays: 31, upto: 5,
+      income: [["Salaire", "Compte courant", 3250, 1]],
+      spend: [["Compte courant", "Courses", [[1, 42.3], [2, 61.4], [3, 18.2], [4, 46.2]]], ["Compte joint", "Courses", [[3, 41.9]]], ["Compte joint", "Maison", [[2, 85.7], [4, 64.3]]], ["Compte courant", "Restaurants", [[1, 47.6], [2, 58], [5, 6.4]]], ["Compte courant", "Transport", [[1, 58], [3, 38]]], ["Compte courant", "Abonnements", [[1, 48.01], [1, 11.99]]], ["Compte courant", "Loisirs", [[3, 54.99], [4, 5.01]]]] },
+    sept: { key: "2026-09", label: "Septembre 2026", ndays: 30, upto: 30,
+      income: [["Salaire", "Compte courant", 3250, 1], ["Participation du conjoint", "Compte joint", 1200, 5], ["Remboursement santé", "Compte courant", 85, 18]],
+      spend: [["Compte joint", "Logement", [[2, 950]]], ["Compte courant", "Courses", [[3, 62], [7, 48], [10, 55], [14, 71], [18, 39], [22, 66], [27, 59]]], ["Compte joint", "Courses", [[12, 62], [25, 68]]], ["Compte joint", "Maison", [[6, 64.3], [16, 98], [24, 47.7]]], ["Compte courant", "Restaurants", [[5, 34], [13, 52], [26, 54]]], ["Compte courant", "Transport", [[4, 58], [15, 38], [23, 64]]], ["Compte courant", "Abonnements", [[1, 60], [10, 25]]], ["Compte courant", "Loisirs", [[9, 54], [20, 88], [28, 48]]], ["Compte courant", "Santé", [[17, 45]]]] },
   };
+  const ACC_COL = { "Compte courant": "#256d85", "Compte joint": "#3f806f" };
+  function monthGraph(M) {
+    const inc = [...new Set(M.income.map((x) => x[0]))], acc = [...new Set([...M.income.map((x) => x[1]), ...M.spend.map((x) => x[0])])], cats = [...new Set(M.spend.map((x) => x[1]))];
+    const sum = (pairs) => pairs.reduce((a, p) => a + p[1], 0);
+    const catTotal = (c) => M.spend.filter((x) => x[1] === c).reduce((a, x) => a + sum(x[2]), 0);
+    cats.sort((x, y) => catTotal(y) - catTotal(x));
+    const nodes = [...inc.map((n, i) => ({ id: "income:" + n, name: n, col: 0, order: i, color: NX.FINANCE_SANKEY_INCOME_PALETTE[i % NX.FINANCE_SANKEY_INCOME_PALETTE.length] })), ...acc.map((n, i) => ({ id: "account:" + n, name: n, col: 1, order: i, color: NX.financeSankeyColor(ACC_COL[n]) })), ...cats.map((n, i) => ({ id: "category:" + n, name: n, col: 2, order: i, color: NX.financeSankeyColor(CATCOL[n], "#587894") }))];
+    const links = [...M.income.map(([n, a, v]) => ({ source: "income:" + n, target: "account:" + a, value: v })), ...M.spend.map(([a, c, p]) => ({ source: "account:" + a, target: "category:" + c, value: sum(p) }))];
+    const merged = []; links.forEach((l) => { const m = merged.find((x) => x.source === l.source && x.target === l.target); if (m) m.value += l.value; else merged.push({ ...l }); });
+    return { nodes, links: merged, columns: ["ORIGINE", "COMPTES", "DESTINATION"] };
+  }
+  function cumulCharts(M) {
+    const days = Array.from({ length: M.ndays }, (_, i) => `${M.key}-${String(i + 1).padStart(2, "0")}`);
+    const budgets = {}; D.budget.categories.forEach((c) => (budgets[c.name] = c.limit));
+    const byCat = {}; M.spend.forEach(([, c, p]) => p.forEach(([d, v]) => { byCat[c] = byCat[c] || Array(M.ndays).fill(0); byCat[c][d - 1] += v; }));
+    const cumulative = Object.entries(byCat).map(([c, daily]) => { let acc = 0; const values = daily.map((v) => Math.round((acc += v) * 100) / 100); return { category: c, color: CATCOL[c], total: values[values.length - 1], budget: budgets[c] || 0, values }; }).sort((x, y) => y.total - x.total);
+    let inc = 0; const incomeCumulative = days.map((_, i) => (inc += M.income.filter((x) => x[3] === i + 1).reduce((a, x) => a + x[2], 0)));
+    const periodic = Object.values(MONTHS).map((m) => ({ month: m.key, categories: Object.keys(CATCOL).map((c) => ({ category: c, amount: m.spend.filter((x) => x[1] === c).reduce((a, x) => a + x[2].reduce((b, p) => b + p[1], 0), 0) })) }));
+    return { days, cumulative, incomeCumulative, budgetTotal: Object.values(budgets).filter((v) => v > 0).reduce((a, v) => a + v, 0), periodic };
+  }
   const ACCOUNTS = [
     { type: "Bourse", bank: "Boursorama", name: "PEA", bal: 14000, color: "#7c5cd6" },
     { type: "Comptes courants", bank: "Boursorama", name: "Compte courant", bal: 4200, color: "#607d9b" },
@@ -647,36 +738,93 @@
     MONTHS24.forEach((m, i) => { if (i % 3 === 2 || i === n - 1) s += `<text x="${X(i)}" y="${H - 6}" text-anchor="middle" class="hx-mct">${m}</text>`; });
     return s + `<circle cx="${X(n - 1)}" cy="${Y(tot[n - 1])}" r="4" fill="#fff" stroke="#18263d" stroke-width="2"/></svg>`;
   }
+  function wealthGraph() {
+    const types = TYPES.map((t) => t[0]).filter((t) => ACCOUNTS.some((a) => a.type === t)), banks = BANKS.map((b) => b[0]);
+    const nodes = [...types.map((n, i) => ({ id: "type:" + n, name: n, col: 0, order: i, color: NX.financeSankeyColor(TYPES.find((t) => t[0] === n)[1], ["#607d9b", "#3f806f"][i % 2]) })), ...banks.map((n, i) => ({ id: "bank:" + n, name: n, col: 1, order: i, color: NX.financeSankeyColor(BANKS[i][1], ["#256d85", "#cf7856", "#73927e"][i % 3]) })), ...ACCOUNTS.map((a, i) => ({ id: "account:" + a.name, name: a.name, col: 2, order: i, color: NX.financeSankeyColor(a.color) }))];
+    const links = [];
+    types.forEach((t) => banks.forEach((b) => { const v = ACCOUNTS.filter((a) => a.type === t && a.bank === b).reduce((x, a) => x + a.bal, 0); if (v > 0) links.push({ source: "type:" + t, target: "bank:" + b, value: v }); }));
+    ACCOUNTS.forEach((a) => links.push({ source: "bank:" + a.bank, target: "account:" + a.name, value: a.bal }));
+    return { nodes, links, columns: ["TYPE", "BANQUE", "COMPTE"] };
+  }
+  // Activité pro (Devis, Factures, Finance PRO) : mêmes statuts que Nexora
+  // (QUOTE_STATUSES, INVOICE_STATUSES, PRO_MISSION_STATUSES), franchise de TVA 2026.
+  const PRO = {
+    seuil: 37500, majore: 41250,
+    monthly: [1800, 2400, 3100, 2200, 2650, 3400, 1500, 900, 3250, 3600],
+    invoices: [
+      { n: "2026-034", client: "Cabinet Delta Ingénierie", obj: "Assistance maîtrise d'œuvre · septembre", issued: K.J(-12), due: K.J(18), amount: 2400, status: "issued" },
+      { n: "2026-033", client: "SCI Les Tilleuls", obj: "Diagnostic structure", issued: K.J(-40), due: K.J(-10), amount: 1200, status: "late" },
+      { n: "2026-032", client: "Commune de Saint-Exemple", obj: "Étude de faisabilité · acompte 30 %", issued: K.J(-21), due: K.J(9), amount: 1200, status: "issued" },
+      { n: "2026-031", client: "Cabinet Delta Ingénierie", obj: "Assistance maîtrise d'œuvre · août", issued: K.J(-44), due: K.J(-14), amount: 1200, status: "paid" },
+    ],
+    quotes: [
+      { n: "D-2026-019", client: "Atelier Mercier", obj: "Note de calcul passerelle", amount: 3900, valid: K.J(21), status: "sent" },
+      { n: "D-2026-018", client: "Commune de Saint-Exemple", obj: "Étude de faisabilité · phase 2", amount: 3000, valid: K.J(9), status: "sent" },
+      { n: "D-2026-017", client: "SCI Les Tilleuls", obj: "Suivi de travaux", amount: 2600, valid: K.J(-3), status: "expired" },
+      { n: "D-2026-016", client: "Cabinet Delta Ingénierie", obj: "Assistance MOE · T4", amount: 7200, valid: K.J(-20), status: "accepted" },
+    ],
+    missions: [
+      { client: "Cabinet Delta Ingénierie", name: "Assistance maîtrise d'œuvre 2026", mode: "Régie journalière", billed: 14400, budget: 21600, status: "en_cours" },
+      { client: "Commune de Saint-Exemple", name: "Étude de faisabilité", mode: "Acompte / jalons facturables", billed: 1200, budget: 4000, status: "en_cours" },
+      { client: "SCI Les Tilleuls", name: "Diagnostic structure", mode: "Forfait", billed: 1200, budget: 1200, status: "cloturee" },
+      { client: "Atelier Mercier", name: "Passerelle piétonne", mode: "Forfait", billed: 0, budget: 3900, status: "prospect" },
+    ],
+  };
+  const QST = { draft: ["Brouillon", "#7A8290"], sent: ["Envoyé", "#2C6BE0"], accepted: ["Accepté", "#16a34a"], refused: ["Refusé", "#dc2626"], expired: ["Expiré", "#d97706"] };
+  const IST = { issued: ["Émise", "#2C6BE0"], paid: ["Payée", "#16a34a"], cancelled: ["Annulée", "#7A8290"], late: ["En retard", "#d97706"] };
+  const MST = { prospect: ["Prospect", "#7A8290"], signee: ["Signée", "#2C6BE0"], en_cours: ["En cours", "#16a34a"], cloturee: ["Clôturée", "#7A8290"] };
+  const badge = ([l, c]) => `<span class="hx-badge2" style="--b:${c}">${l}</span>`;
+  function proChart() {
+    const W = 1240, H = 210, L = 50, R = 175, T = 14, B = 24, n = 12, months = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+    let cum = 0; const cumul = PRO.monthly.map((v) => (cum += v));
+    const max = PRO.majore * 1.08, Y = (v) => T + (1 - v / max) * (H - T - B), X = (i) => L + (i + .5) * (W - L - R) / n, bw = (W - L - R) / n * .5;
+    const ymax = Math.max(...PRO.monthly) * 3.2, Yb = (v) => (H - B) - (v / ymax) * (H - T - B);
+    let s = `<svg class="hx-mc" viewBox="0 0 ${W} ${H}" role="img" aria-label="Encaissements 2026 face au seuil de franchise de TVA">`;
+    NX.financeChartTicks(max).ticks.forEach((t) => (s += `<line x1="${L}" x2="${W - R}" y1="${Y(t)}" y2="${Y(t)}" stroke="#ebecee"/><text x="${L - 6}" y="${Y(t) + 3}" text-anchor="end" class="hx-mct">${NX.financeChartShortEuro(t)}</text>`));
+    PRO.monthly.forEach((v, i) => (s += `<rect x="${X(i) - bw / 2}" y="${Yb(v)}" width="${bw}" height="${H - B - Yb(v)}" rx="3" fill="#2a78d6" opacity=".28" data-tip="${e(`${months[i]} 2026|Encaissé : ${NX.financeBudgetEuro(v)}|Cumul : ${NX.financeBudgetEuro(cumul[i])}`)}"/>`));
+    s += `<path d="${cumul.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(" ")}" fill="none" stroke="#2a78d6" stroke-width="2.2"/>`;
+    cumul.forEach((v, i) => (s += `<circle cx="${X(i)}" cy="${Y(v)}" r="3" fill="#2a78d6" stroke="#fff" stroke-width="1.5"/>`));
+    [[PRO.seuil, "Seuil de franchise", "#c0392b"], [PRO.majore, "Seuil majoré", "#7a1f16"]].forEach(([v, l, c]) => (s += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="${c}" stroke-width="1.4" stroke-dasharray="6 4"/><text x="${W - R + 6}" y="${Y(v) + 4}" class="hx-mct" style="fill:${c};font-weight:600">${l} ${NX.financeChartShortEuro(v)}</text>`));
+    s += `<text x="${X(9) + 8}" y="${Y(cum) - 6}" class="hx-mcv">${NX.financeBudgetEuro(cum)} encaissés</text>`;
+    months.forEach((m, i) => (s += `<text x="${X(i)}" y="${H - 6}" text-anchor="middle" class="hx-mct">${m}</text>`));
+    return s + "</svg>";
+  }
   function argent() {
     const tab = S.atab, b = D.budget, bp = K.budgetPace();
-    const tabs = `<div class="hx-tabs">${[["mois", "Mois"], ["patrimoine", "Patrimoine"], ["operations", "Opérations"]].map(([id, l]) => `<button type="button" data-atab="${id}" aria-selected="${tab === id}">${l}</button>`).join("")}</div>`;
+    const tabs = `<div class="hx-tabs">${[["mois", "Mois"], ["patrimoine", "Patrimoine"], ["pro", "Pro"], ["operations", "Opérations"]].map(([id, l]) => `<button type="button" data-atab="${id}" aria-selected="${tab === id}">${l}</button>`).join("")}</div>`;
     let body = "";
     if (tab === "mois") {
-      const F = FLOWS[S.amonth], todo = b.toCategorize.filter((x) => !S.categorized[x.id]);
-      const cal = (() => { const first = new Date(Date.UTC(2026, 9, 1)).getUTCDay() || 7; let h = ["L", "M", "M", "J", "V", "S", "D"].map((x) => `<b>${x}</b>`).join("") + "<span></span>".repeat(first - 1); for (let d = 1; d <= 31; d++) { const iso = "2026-10-" + String(d).padStart(2, "0"), i = SERIES.dates.indexOf(iso), v = i >= 0 ? SERIES.spend[i] : 0; h += `<span class="${iso === TODAY ? "is-today" : ""} ${iso > TODAY ? "is-future" : ""}" style="--s:${Math.min(1, v / 120)}" title="${d} oct. · ${v ? v + " €" : "aucune dépense"}">${d}${v ? `<small>${v} €</small>` : ""}</span>`; } return h; })();
-      body = `<div class="hx-mhead2"><div class="hx-nav2"><button type="button" data-amonth="sept" aria-label="Mois précédent" ${S.amonth === "sept" ? "disabled" : ""}>‹</button><b>${F.label}</b><button type="button" data-amonth="oct" aria-label="Mois suivant" ${S.amonth === "oct" ? "disabled" : ""}>›</button></div>
-        <div class="hx-mk"><div><small>Revenus</small><b>${K.euro(F.income)}</b></div><div><small>Dépenses</small><b>${K.euro(F.spent)}</b></div><div><small>Épargne</small><b class="hx-green">${K.euro(F.saved)}</b><span class="hx-dim">${Math.round(F.saved / F.income * 100)} % des revenus</span></div>${S.amonth === "oct" ? `<div><small>Reste à dépenser</small><b>${K.euro(bp.left)}</b><span class="hx-dim">${K.euro(bp.perDay)} / jour</span></div><div class="is-wide"><small>Rythme</small><span class="hx-pace"><i style="width:${Math.round(b.spent / b.total * 100)}%"></i><b style="left:${Math.round(b.dayOfMonth / b.daysInMonth * 100)}%"></b></span><span class="hx-red">${K.euro(bp.ahead)} au-dessus du rythme</span></div>` : `<div><small>Budget tenu</small><b>6 / 7</b><span class="hx-dim">catégories dans l'enveloppe</span></div>`}</div></div>
-        <section class="hx-tile"><header class="hx-th"><h2>Flux du mois <small>origine › compte › destination</small></h2></header>${sankey(F.cols, F.links, { label: "Flux du mois", h: S.amonth === "sept" ? 380 : 300 })}</section>
-        <div class="hx-acols"><section class="hx-tile"><header class="hx-th"><h2>Budget par catégorie</h2><small class="hx-dim">trait : où vous devriez en être au ${b.dayOfMonth}</small></header>${b.categories.map((c) => { const pct = Math.round(c.spent / c.limit * 100); return `<div class="hx-bcat ${pct > 100 ? "is-over" : ""}"><span><i style="background:${c.color}"></i>${e(c.name)}</span><span class="hx-bmeter"><i style="width:${Math.min(100, pct)}%;background:${pct > 100 ? "#dc2626" : c.color}"></i><b style="left:${Math.round(b.dayOfMonth / b.daysInMonth * 100)}%"></b></span><span class="hx-num">${K.euro(c.spent)} <small>/ ${K.euro(c.limit)}</small></span><span class="hx-num ${pct > 100 ? "hx-red" : "hx-dim"}">${pct} %</span></div>`; }).join("")}</section>
-          <section class="hx-tile"><header class="hx-th"><h2>À classer <span class="hx-badge">${todo.length}</span></h2></header>${todo.map((x) => `<div class="hx-txr"><span>${e(x.label)} <small class="hx-dim">${K.dateShort(x.date)}</small></span><span class="hx-num">${K.euro(x.amount, true)}</span><button type="button" class="hx-btn is-sm" data-cat="${x.id}:${x.suggest}">→ ${e(x.suggest)}</button></div>`).join("") || `<p class="hx-dim">Tout est classé.</p>`}
-            <header class="hx-th is-sub"><h2>Dépenses par jour</h2></header><div class="hx-mcal">${cal}</div></section></div>`;
+      const M = MONTHS[S.amonth], G = monthGraph(M), C = cumulCharts(M), todo = b.toCategorize.filter((x) => !S.categorized[x.id]);
+      const income = M.income.reduce((a, x) => a + x[2], 0), spent = G.links.filter((l) => l.source.startsWith("account:")).reduce((a, l) => a + l.value, 0);
+      body = `<div class="hx-mhead2"><div class="hx-nav2"><button type="button" data-amonth="sept" aria-label="Mois précédent" ${S.amonth === "sept" ? "disabled" : ""}>‹</button><b>${M.label}${S.amonth === "oct" ? " · au 5" : ""}</b><button type="button" data-amonth="oct" aria-label="Mois suivant" ${S.amonth === "oct" ? "disabled" : ""}>›</button></div>
+        <div class="hx-mk"><div><small>Revenus</small><b>${NX.financeBudgetEuro(income)}</b></div><div><small>Dépenses</small><b>${NX.financeBudgetEuro(spent)}</b></div><div><small>Solde du mois</small><b class="hx-green">${NX.financeBudgetEuro(income - spent)}</b></div>${S.amonth === "oct" ? `<div><small>Reste à dépenser</small><b>${K.euro(bp.left)}</b><span class="hx-dim">${K.euro(bp.perDay)} / jour</span></div><div class="is-wide"><small>Rythme du budget · ${K.euro(b.spent)} sur ${K.euro(b.total)}</small><span class="hx-pace"><i style="width:${Math.round(b.spent / b.total * 100)}%"></i><b style="left:${Math.round(b.dayOfMonth / b.daysInMonth * 100)}%"></b></span><span class="${bp.ahead > 0 ? "hx-red" : "hx-green"}">${bp.ahead > 0 ? K.euro(bp.ahead) + " au-dessus du rythme" : "dans le rythme"}</span></div>` : `<div><small>Budget</small><b>${NX.financeBudgetEuro(C.budgetTotal)}</b><span class="hx-dim">${NX.financeBudgetEuro(C.budgetTotal - spent)} non dépensés</span></div>`}</div></div>
+        <section class="hx-tile"><header class="hx-th"><h2>Flux du mois</h2><small class="hx-dim">graphique Sankey de Nexora, à l'identique</small></header>${NXG.sankey(G, { title: "Sankey mensuel (flux)", period: M.label, height: 470 })}</section>
+        <section class="hx-tile"><header class="hx-th"><h2>Budget cumulé par mois</h2><small class="hx-dim">par catégorie (aires empilées), face au budget et aux revenus réels · graphique de Nexora, à l'identique</small></header>${NXG.cumul(C, { height: 320 })}</section>
+        <div class="hx-acols"><section class="hx-tile"><header class="hx-th"><h2>Budget par catégorie</h2><small class="hx-dim">trait : où vous devriez en être au ${b.dayOfMonth}</small></header>${b.categories.map((c) => { const pct = c.limit ? Math.round(c.spent / c.limit * 100) : 0; return `<div class="hx-bcat ${pct > 100 ? "is-over" : ""}"><span><i style="background:${c.color}"></i>${e(c.name)}</span><span class="hx-bmeter"><i style="width:${Math.min(100, pct)}%;background:${pct > 100 ? "#dc2626" : c.color}"></i><b style="left:${Math.round(b.dayOfMonth / b.daysInMonth * 100)}%"></b></span><span class="hx-num">${K.euro(c.spent)} <small>/ ${K.euro(c.limit)}</small></span><span class="hx-num ${pct > 100 ? "hx-red" : "hx-dim"}">${pct} %</span></div>`; }).join("")}</section>
+          <section class="hx-tile"><header class="hx-th"><h2>À classer <span class="hx-badge">${todo.length}</span></h2></header>${todo.map((x) => `<div class="hx-txr"><span>${e(x.label)} <small class="hx-dim">${K.dateShort(x.date)}</small></span><span class="hx-num">${K.euro(x.amount, true)}</span><button type="button" class="hx-btn is-sm" data-cat="${x.id}:${x.suggest}">→ ${e(x.suggest)}</button></div>`).join("") || `<p class="hx-dim">Tout est classé.</p>`}</section></div>`;
     } else if (tab === "patrimoine") {
       const last = WSERIES[23], prev = WSERIES[22], y = WSERIES[11], sum = (o) => Object.values(o).reduce((a, b2) => a + b2, 0);
       const t = sum(last), m1 = t - sum(prev), m12 = t - sum(y);
-      const cols = [TYPES.map(([n, c]) => [n, c]), BANKS.map(([n, c]) => [n, c]), ACCOUNTS.map((a) => [a.name, a.color])];
-      const links = []; TYPES.forEach(([ty]) => BANKS.forEach(([bk]) => { const v = ACCOUNTS.filter((a) => a.type === ty && a.bank === bk).reduce((x, a) => x + a.bal, 0); if (v) links.push([ty, bk, v]); })); ACCOUNTS.forEach((a) => links.push([a.bank, a.name, a.bal]));
       body = `<div class="hx-mk"><div><small>Patrimoine</small><b>${K.euro(t)}</b></div><div><small>Sur 1 mois</small><b class="${m1 >= 0 ? "hx-green" : "hx-red"}">${m1 >= 0 ? "+" : "−"}${K.euro(Math.abs(m1))}</b><span class="hx-dim">${(m1 / sum(prev) * 100).toFixed(1).replace(".", ",")} %</span></div><div><small>Sur 12 mois</small><b class="hx-green">+${K.euro(m12)}</b><span class="hx-dim">${(m12 / sum(y) * 100).toFixed(1).replace(".", ",")} %</span></div><div><small>Disponible</small><b>${K.euro(last["Comptes courants"] + last["Épargne réglementée"])}</b><span class="hx-dim">comptes + livrets</span></div><div><small>Investi</small><b>${K.euro(last["Assurance-vie"] + last["Bourse"])}</b><span class="hx-dim">assurance-vie + bourse</span></div></div>
         <section class="hx-tile"><header class="hx-th"><h2>Évolution sur 24 mois <small>par type de compte</small></h2><span class="hx-sleg">${TYPES.map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join("")}</span></header>${stackChart()}</section>
-        <div class="hx-acols"><section class="hx-tile"><header class="hx-th"><h2>Structure <small>type › banque › compte</small></h2></header>${sankey(cols, links, { label: "Structure du patrimoine", w: 760, h: 270, left: 205, right: 170 })}</section>
+        <div class="hx-acols"><section class="hx-tile"><header class="hx-th"><h2>Structure du patrimoine</h2><small class="hx-dim">type › banque › compte · Sankey de Nexora</small></header>${NXG.sankey(wealthGraph(), { title: "Structure du patrimoine (Sankey)", period: "Soldes au 5 oct. 2026", height: 380 })}</section>
           <section class="hx-tile"><header class="hx-th"><h2>Comptes</h2></header><table class="hx-atab"><thead><tr><th>Compte</th><th>Banque</th><th>Solde</th><th>Part</th></tr></thead><tbody>${TYPES.map(([ty, c]) => `<tr class="is-grp"><th colspan="2"><i style="background:${c}"></i>${ty}</th><td class="hx-num">${K.euro(last[ty])}</td><td class="hx-num hx-dim">${Math.round(last[ty] / t * 100)} %</td></tr>${ACCOUNTS.filter((a) => a.type === ty).map((a) => `<tr><td>${e(a.name)}</td><td class="hx-dim">${e(a.bank)}</td><td class="hx-num">${K.euro(a.bal)}</td><td><span class="hx-bar"><i style="width:${a.bal / t * 100}%;background:${c}"></i></span></td></tr>`).join("")}`).join("")}</tbody></table></section></div>`;
+    } else if (tab === "pro") {
+      const enc = PRO.monthly.reduce((a, v) => a + v, 0), open = PRO.invoices.filter((i) => i.status === "issued" || i.status === "late"), late = PRO.invoices.filter((i) => i.status === "late"), sent = PRO.quotes.filter((q) => q.status === "sent");
+      body = `<div class="hx-mk"><div class="is-wide"><small>Chiffre d'affaires encaissé 2026 · franchise en base de TVA</small><span class="hx-pace is-pro"><i style="width:${(enc / PRO.majore * 100).toFixed(1)}%"></i><b style="left:${(PRO.seuil / PRO.majore * 100).toFixed(1)}%"></b></span><span><b>${NX.financeBudgetEuro(enc)}</b> <span class="hx-dim">· ${Math.round(enc / PRO.seuil * 100)} % du seuil de ${NX.financeBudgetEuro(PRO.seuil)} · majoré ${NX.financeBudgetEuro(PRO.majore)}</span></span></div><div><small>À encaisser</small><b>${NX.financeBudgetEuro(open.reduce((a, i) => a + i.amount, 0))}</b><span class="hx-dim">${open.length} factures émises</span></div><div><small>En retard</small><b class="hx-red">${NX.financeBudgetEuro(late.reduce((a, i) => a + i.amount, 0))}</b><span class="hx-dim">${late.length} facture</span></div><div><small>Devis envoyés</small><b>${NX.financeBudgetEuro(sent.reduce((a, q) => a + q.amount, 0))}</b><span class="hx-dim">${sent.length} en attente de réponse</span></div></div>
+        <section class="hx-tile"><header class="hx-th"><h2>Encaissements 2026</h2><small class="hx-dim">barres : par mois · courbe : cumul face aux seuils de franchise</small></header>${proChart()}</section>
+        <div class="hx-acols"><section class="hx-tile"><header class="hx-th"><h2>Factures</h2><button type="button" class="hx-more">+ Facture</button></header><table class="hx-atab"><thead><tr><th>N°</th><th>Client · objet</th><th>Échéance</th><th>Montant</th><th>Statut</th></tr></thead><tbody>${PRO.invoices.map((i) => `<tr><td class="hx-num">${i.n}</td><td><b>${e(i.client)}</b><br><small class="hx-dim">${e(i.obj)}</small></td><td class="hx-num ${i.status === "late" ? "hx-red" : ""}">${K.dateShort(i.due)}</td><td class="hx-num">${NX.financeBudgetEuro(i.amount)}</td><td>${badge(IST[i.status])}</td></tr>`).join("")}</tbody></table></section>
+          <section class="hx-tile"><header class="hx-th"><h2>Devis</h2><button type="button" class="hx-more">+ Devis</button></header><table class="hx-atab"><thead><tr><th>N°</th><th>Client · objet</th><th>Validité</th><th>Montant</th><th>Statut</th></tr></thead><tbody>${PRO.quotes.map((q) => `<tr><td class="hx-num">${q.n}</td><td><b>${e(q.client)}</b><br><small class="hx-dim">${e(q.obj)}</small></td><td class="hx-num">${K.dateShort(q.valid)}</td><td class="hx-num">${NX.financeBudgetEuro(q.amount)}</td><td>${badge(QST[q.status])}</td></tr>`).join("")}</tbody></table></section></div>
+        <section class="hx-tile"><header class="hx-th"><h2>Missions</h2></header><table class="hx-atab"><thead><tr><th>Client</th><th>Mission</th><th>Facturation</th><th>Facturé</th><th></th><th>Statut</th></tr></thead><tbody>${PRO.missions.map((m) => `<tr><td><b>${e(m.client)}</b></td><td>${e(m.name)}</td><td class="hx-dim">${e(m.mode)}</td><td class="hx-num">${NX.financeBudgetEuro(m.billed)} <small class="hx-dim">/ ${NX.financeBudgetEuro(m.budget)}</small></td><td style="width:18%"><span class="hx-bar"><i style="width:${Math.round(m.billed / m.budget * 100)}%;background:#2a78d6"></i></span></td><td>${badge(MST[m.status])}</td></tr>`).join("")}</tbody></table>
+          <p class="hx-hint">Finance PRO garde ses 6 onglets : Synthèse, Clients &amp; missions, Vue mission, Factures &amp; encaissements, Dépenses &amp; justificatifs, Trésorerie &amp; prévisions. Le livre des recettes reste dans Factures.</p></section>`;
     } else {
-      const all = [...b.transactions, { date: J(-5), label: "Prélèvement EDF", amount: -64.3, cat: "Maison" }, { date: J(-6), label: "Pharmacie Bellecour", amount: -18.9, cat: "Santé" }, { date: J(-7), label: "Monoprix", amount: -37.45, cat: "Courses" }, { date: J(-8), label: "Loyer octobre", amount: -950, cat: "Logement" }, { date: J(-9), label: "Facture 2026-031 · client", amount: 1200, cat: "Revenus pro" }, { date: J(-10), label: "Free Mobile", amount: -15.99, cat: "Abonnements" }];
+      const all = [...b.transactions, { date: J(-5), label: "Prélèvement EDF", amount: -64.3, cat: "Maison" }, { date: J(-6), label: "Pharmacie Bellecour", amount: -18.9, cat: "Santé" }, { date: J(-7), label: "Monoprix", amount: -37.45, cat: "Courses" }, { date: J(-8), label: "Loyer octobre", amount: -950, cat: "Logement" }, { date: J(-10), label: "Free Mobile", amount: -15.99, cat: "Abonnements" }];
       const q = S.aq.toLowerCase(), list = all.filter((x) => (!q || x.label.toLowerCase().includes(q)) && (!S.acat || (x.cat || "À classer") === S.acat)).sort((a, c) => c.date.localeCompare(a.date));
       const cats = [...new Set(all.map((x) => x.cat || "À classer"))];
       body = `<div class="hx-fbar"><label class="hx-fsearch"><span aria-hidden="true">⌕</span><input id="hx-aq" data-aq value="${e(S.aq)}" placeholder="Rechercher une opération" aria-label="Rechercher une opération" autocomplete="off"></label>${cats.map((c) => `<button type="button" class="hx-fchip ${S.acat === c ? "is-on" : ""}" data-acat="${e(c)}">${e(c)}</button>`).join("")}<p class="hx-fsum"><b>${list.length} opérations</b> · ${S.acat ? "catégorie : " + e(S.acat) : "toutes catégories"} · <button type="button" class="hx-more">Exporter en CSV</button></p></div>
-        <div class="hx-tile hx-ops"><table class="hx-atab"><thead><tr><th>Date</th><th>Libellé</th><th>Compte</th><th>Catégorie</th><th>Montant</th></tr></thead><tbody>${list.map((x) => { const tc = b.toCategorize.find((y) => y.label === x.label), cat = x.cat || (tc && S.categorized[tc.id]); return `<tr><td class="hx-num hx-dim">${K.dateShort(x.date)}</td><td>${e(x.label)}</td><td class="hx-dim">${x.cat === "Revenus pro" ? "Compte pro" : "Compte courant"}</td><td>${cat ? `<span class="hx-catc">${e(cat)}</span>` : `<button type="button" class="hx-btn is-sm" data-cat="${tc ? tc.id : ""}:${tc ? tc.suggest : ""}">À classer → ${tc ? e(tc.suggest) : ""}</button>`}</td><td class="hx-num ${x.amount > 0 ? "hx-green" : ""}">${K.euro(x.amount, true)}</td></tr>`; }).join("")}</tbody></table></div>`;
+        <div class="hx-tile hx-ops"><table class="hx-atab"><thead><tr><th>Date</th><th>Libellé</th><th>Compte</th><th>Catégorie</th><th>Montant</th></tr></thead><tbody>${list.map((x) => { const tc = b.toCategorize.find((y) => y.label === x.label), cat = x.cat || (tc && S.categorized[tc.id]); return `<tr><td class="hx-num hx-dim">${K.dateShort(x.date)}</td><td>${e(x.label)}</td><td class="hx-dim">${x.cat === "Logement" || x.cat === "Maison" ? "Compte joint" : "Compte courant"}</td><td>${cat ? `<span class="hx-catc">${e(cat)}</span>` : `<button type="button" class="hx-btn is-sm" data-cat="${tc ? tc.id : ""}:${tc ? tc.suggest : ""}">À classer → ${tc ? e(tc.suggest) : ""}</button>`}</td><td class="hx-num ${x.amount > 0 ? "hx-green" : ""}">${K.euro(x.amount, true)}</td></tr>`; }).join("")}</tbody></table></div>`;
     }
-    return `<main class="hx-main hx-argent" data-scroll><div class="hx-hello hx-row"><div><h1>Argent</h1><p>Budget personnel (KDM360) et patrimoine. La seule écriture possible reste le classement d'une opération, comme dans Nexora.</p></div>${tabs}</div>${body}<p class="hx-hint">Activité pro (devis, factures, Finance PRO) : onglet « Pro » à ajouter sur le même modèle.</p></main>`;
+    return `<main class="hx-main hx-argent" data-scroll><div class="hx-hello hx-row"><div><h1>Argent</h1><p>Budget personnel (KDM360), patrimoine et activité pro. Côté budget, la seule écriture possible reste le classement d'une opération, comme dans Nexora.</p></div>${tabs}</div>${body}</main>`;
   }
 
   // ------------------------------------------------------------ fiche, saisie
@@ -705,13 +853,89 @@
       <footer><button type="button" class="hx-btn is-ghost" data-close>Annuler</button><button type="submit" class="hx-btn is-primary">Créer la tâche</button></footer></form>`;
   }
 
+  // ------------------------------------------------------------ réglages
+  // Réglages › Thèmes d'habitudes : une couleur par habitude (habit.color dans Nexora).
+  const HPALETTE = ["#16a34a", "#0f9d76", "#0284c7", "#2563eb", "#4f46e5", "#7c3aed", "#db2777", "#dc2626", "#ea580c", "#d97706", "#64748b", "#18263d"];
+  function settings() {
+    if (!S.settings) return "";
+    return `<div class="hx-scrim" data-settings></div><section class="hx-settings" role="dialog" aria-label="Réglages"><header class="hx-th"><h2>Réglages</h2><button type="button" class="hx-x" data-settings aria-label="Fermer">×</button></header>
+      <nav class="hx-stabs"><b>Thèmes d'habitudes</b><span>Apparence</span><span>Vues affichées</span><span>Objectifs sport</span><span>Catégories budget</span><span>Intégrations</span><span>Raccourcis</span></nav>
+      <div class="hx-sbody"><p class="hx-hint">Chaque habitude garde sa couleur partout : anneau du cadran, pixel du jour, grilles et liaisons. Les autres onglets reprennent les réglages de Nexora (12 onglets) ; seul celui-ci est simulé ici.</p>
+      ${THEMES.map((t) => `<h3><i style="background:${t.color}"></i>${e(t.name)} <small>${t.mode === "single" ? "un seul choix" : "plusieurs possibles"}</small></h3>${t.habits.map((h) => { const cur = hc({ ...h, theme: t }); return `<div class="hx-hset"><span class="hx-hname"><i class="hx-hdot" style="background:${cur}"></i>${e(h.name)}</span><span class="hx-swatches">${HPALETTE.map((c) => `<button type="button" data-hcol="${h.id}|${c}" class="${c === cur ? "is-on" : ""}" style="background:${c}" aria-label="Couleur ${c} pour ${e(h.name)}"></button>`).join("")}<input type="color" data-hpick="${h.id}" value="${cur}" aria-label="Autre couleur pour ${e(h.name)}"></span>${S.hcolors[h.id] ? `<button type="button" class="hx-more" data-hreset="${h.id}">Couleur du thème</button>` : `<span class="hx-dim">couleur du thème</span>`}</div>`; }).join("")}`).join("")}
+      </div></section>`;
+  }
+
+  // ------------------------------------------------------- glisser-déposer
+  // Déplacer une tâche (dates décalées), étirer un bord (début ou fin), ou la
+  // déposer sur la portée d'un autre projet (projet modifié). Annulable.
+  let drag = null;
+  document.addEventListener("pointerdown", (ev) => {
+    const el = ev.target.closest && ev.target.closest("[data-drag]"); if (!el || ev.button !== 0) return;
+    const track = el.closest("[data-rs]"); if (!track) return;
+    const t = K.task(el.dataset.drag); if (!t) return;
+    const rb = el.getBoundingClientRect(), tr = track.getBoundingClientRect(), x = ev.clientX;
+    const mode = t.milestone ? "move" : x - rb.left < 8 ? "start" : rb.right - x < 8 ? "end" : "move";
+    drag = { id: t.id, el, mode, x0: x, y0: ev.clientY, dayPx: tr.width / Number(track.dataset.rn), left: el.offsetLeft, width: el.offsetWidth, moved: false, lane: null };
+    el.setPointerCapture && el.setPointerCapture(ev.pointerId);
+    el.classList.add("is-dragging");
+  });
+  document.addEventListener("pointermove", (ev) => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.x0, dd = Math.round(dx / drag.dayPx), t = K.task(drag.id);
+    if (Math.abs(dx) > 3 || Math.abs(ev.clientY - drag.y0) > 6) drag.moved = true;
+    if (!drag.moved) return;
+    const el = drag.el;
+    if (drag.mode === "move") el.style.transform = `translate(${dd * drag.dayPx}px, ${ev.clientY - drag.y0}px)`;
+    else if (drag.mode === "start") { el.style.left = drag.left + dd * drag.dayPx + "px"; el.style.width = Math.max(drag.dayPx, drag.width - dd * drag.dayPx) + "px"; }
+    else el.style.width = Math.max(drag.dayPx, drag.width + dd * drag.dayPx) + "px";
+    const under = document.elementsFromPoint(ev.clientX, ev.clientY).find((n) => n.dataset && n.dataset.laneProject);
+    document.querySelectorAll(".hx-lane.is-drop").forEach((n) => n.classList.remove("is-drop"));
+    drag.lane = drag.mode === "move" && under && under.dataset.laneProject !== t.projectId ? under.dataset.laneProject : null;
+    if (drag.lane) under.classList.add("is-drop");
+    const ns = drag.mode === "end" ? t.start : K.addDays(t.start, dd), ne = drag.mode === "start" ? t.end : K.addDays(t.end, dd);
+    drag.dd = dd;
+    NXG.pointerTip(`<div class="nx-bch-tip"><strong>${e(t.title)}</strong><div><span>${drag.mode === "move" ? "Déplacer" : drag.mode === "start" ? "Nouveau début" : "Nouvelle fin"}</span><span>${dd > 0 ? "+" : ""}${dd} j</span></div><div><span>${t.milestone ? "Jalon" : "Dates"}</span><span>${t.milestone ? K.dateShort(ne) : `${K.dateShort(ns > ne ? ne : ns)} → ${K.dateShort(ne)}`}</span></div>${drag.lane ? `<div><span>Nouveau projet</span><span>${e(proj(drag.lane).name)}</span></div>` : ""}</div>`, ev.clientX, ev.clientY);
+  });
+  document.addEventListener("pointerup", () => {
+    if (!drag) return;
+    const d0 = drag; drag = null; NXG.pointerTip(null);
+    document.querySelectorAll(".hx-lane.is-drop").forEach((n) => n.classList.remove("is-drop"));
+    d0.el.classList.remove("is-dragging");
+    if (!d0.moved) return;
+    S.justDragged = true; setTimeout(() => (S.justDragged = false), 0);
+    const t = K.task(d0.id), dd = d0.dd || 0;
+    if (!dd && !d0.lane) { render(); return; }
+    S.undo = { id: t.id, start: t.start, end: t.end, projectId: t.projectId };
+    if (d0.mode === "move") { t.start = K.addDays(t.start, dd); t.end = K.addDays(t.end, dd); }
+    else if (d0.mode === "start") { t.start = K.addDays(t.start, dd); if (t.start > t.end) t.start = t.end; }
+    else { t.end = K.addDays(t.end, dd); if (t.end < t.start) t.end = t.start; }
+    if (d0.lane) t.projectId = d0.lane;
+    S.toast = `« ${t.title} » ${t.milestone ? "le " + K.dateShort(t.end) : `du ${K.dateShort(t.start)} au ${K.dateShort(t.end)}`}${d0.lane ? " · déplacée dans " + proj(d0.lane).name : ""} (démo)`;
+    render();
+  });
+
+  // Infobulle commune : tout élément portant data-tip (« titre|ligne|ligne »).
+  document.addEventListener("mousemove", (ev) => {
+    if (drag || !window.NXG) return;
+    if (ev.target.closest && ev.target.closest("[data-nxg]")) return;
+    const el = ev.target.closest && ev.target.closest("[data-tip]");
+    if (!el) { if (S && S.tipOn) { S.tipOn = false; NXG.pointerTip(null); } return; }
+    const [h, ...rest] = el.getAttribute("data-tip").split("|");
+    S.tipOn = true;
+    NXG.pointerTip(`<div class="nx-bch-tip"><strong>${e(h)}</strong>${rest.map((x) => `<div><span>${e(x)}</span></div>`).join("")}</div>`, ev.clientX, ev.clientY);
+  });
+
   // ----------------------------------------------------------------- rendu
   const SCREENS = { accueil, journee, planning, projets, corps, argent };
   function render() {
     const app = document.getElementById("hx-app");
     const sc = app.querySelector("[data-scroll]"), keep = sc ? sc.scrollTop : 0, same = app.dataset.screen === S.screen;
     app.dataset.screen = S.screen;
-    app.innerHTML = topbar() + `<div class="hx-body ${S.taskId ? "has-panel" : ""}">${SCREENS[S.screen]()}${panel()}</div>` + composer() + (S.toast ? `<div class="hx-toast" role="status">${e(S.toast)}</div>` : "");
+    if (window.NXG) NXG.reset();
+    app.innerHTML = topbar() + `<div class="hx-body ${S.taskId ? "has-panel" : ""}">${SCREENS[S.screen]()}${panel()}</div>` + composer() + settings() + (S.toast ? `<div class="hx-toast" role="status">${e(S.toast)}${S.undo ? ` <button type="button" data-undo>Annuler</button>` : ""}</div>` : "");
+    if (window.NXG) NXG.mount(app);
+    // Ruban : titre sorti à droite quand il ne tient pas dans la barre.
+    app.querySelectorAll(".gs-ruban:not(.is-row) .g-lab").forEach((l) => { if (l.scrollWidth > l.clientWidth + 1) l.closest(".hx-g").classList.add("lab-out"); });
     const sc2 = app.querySelector("[data-scroll]"); if (sc2 && same) sc2.scrollTop = keep;
     const f = app.querySelector("#hx-draft"); if (f && S.composer) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
     if (S.focus) { const g = app.querySelector("#" + S.focus); if (g) { g.focus(); g.setSelectionRange(g.value.length, g.value.length); } S.focus = ""; }
@@ -719,10 +943,16 @@
   function go(screen, extra = {}) { S.screen = screen; S.toast = ""; S.composer = false; if (extra.project) S.projectId = extra.project; S.taskId = extra.task || (screen === "projets" && !extra.project ? S.taskId : null); render(); }
 
   document.addEventListener("click", (ev) => {
-    const el = ev.target.closest("[data-nav],[data-task],[data-close],[data-done],[data-new],[data-hab],[data-cat],[data-append],[data-reset],[data-demo],[data-pop],[data-fpop],[data-fclear],[data-ftoggle],[data-fview],[data-zoom],[data-shift],[data-group],[data-collapse],[data-cmp],[data-cper],[data-csec],[data-atab],[data-amonth],[data-acat]");
+    const el = ev.target.closest("[data-nav],[data-task],[data-close],[data-done],[data-new],[data-hab],[data-cat],[data-append],[data-reset],[data-demo],[data-pop],[data-fpop],[data-fclear],[data-ftoggle],[data-fview],[data-zoom],[data-shift],[data-group],[data-collapse],[data-cmp],[data-cper],[data-cagg],[data-sagg],[data-gstyle],[data-settings],[data-hcol],[data-hreset],[data-undo],[data-csec],[data-atab],[data-amonth],[data-acat]");
     if (!el) { if (!ev.target.closest(".hx-pop") && (S.fpop || S.pop)) { S.fpop = ""; S.pop = ""; render(); } return; }
     const d = el.dataset;
+    if (S.justDragged && (d.task || d.drag)) { S.justDragged = false; return; }
     if (d.reset !== undefined) { reset(); render(); return; }
+    if (d.gstyle) { S.gstyle = d.gstyle; render(); return; }
+    if (d.settings !== undefined) { S.settings = !S.settings; render(); return; }
+    if (d.hcol) { const [h, c] = d.hcol.split("|"); S.hcolors[h] = c; render(); return; }
+    if (d.hreset) { delete S.hcolors[d.hreset]; render(); return; }
+    if (d.undo !== undefined && S.undo) { const u = S.undo, t = K.task(u.id); if (t) Object.assign(t, { start: u.start, end: u.end, projectId: u.projectId }); S.undo = null; S.toast = `« ${t.title} » : modification annulée`; render(); return; }
     if (d.pop !== undefined) { S.pop = S.pop === d.pop ? "" : d.pop; S.fpop = ""; render(); return; }
     if (d.fpop) { S.fpop = S.fpop === d.fpop ? "" : d.fpop; S.pop = ""; render(); return; }
     if (d.fclear) { S.filter[d.fclear].clear(); S.fview = ""; render(); return; }
@@ -734,6 +964,8 @@
     if (d.collapse) { if (S.collapsed.has(d.collapse)) S.collapsed.delete(d.collapse); else S.collapsed.add(d.collapse); render(); return; }
     if (d.cmp) { S.cmp = d.cmp; render(); return; }
     if (d.cper) { S.cper = Number(d.cper); render(); return; }
+    if (d.cagg) { S.cagg = d.cagg; render(); return; }
+    if (d.sagg) { S.sagg = d.sagg; render(); return; }
     if (d.csec) { if (S.closed.has(d.csec)) S.closed.delete(d.csec); else S.closed.add(d.csec); render(); return; }
     if (d.atab) { S.atab = d.atab; render(); return; }
     if (d.amonth) { S.amonth = d.amonth; render(); return; }
@@ -763,6 +995,7 @@
     const ds = ev.target.dataset || {};
     if (ds.fset) { const [k, id] = ds.fset.split("|"); const set = S.filter[k]; if (set.has(id)) set.delete(id); else set.add(id); S.fview = ""; render(); return; }
     if (ds.show) { S.show[ds.show] = ev.target.checked; render(); return; }
+    if (ds.hpick) { S.hcolors[ds.hpick] = ev.target.value; render(); return; }
     const m = ds.metric; if (!m) return; const [scope, k] = m.split("|"); const set = S.metrics[scope]; if (set.has(k)) set.delete(k); else set.add(k); render(); });
   document.addEventListener("input", (ev) => {
     if (ev.target.matches("[data-fq]")) { S.filter.q = ev.target.value; S.fview = ""; S.focus = "hx-fq"; render(); return; }
