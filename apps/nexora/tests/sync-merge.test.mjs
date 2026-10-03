@@ -9,7 +9,7 @@ import vm from "node:vm";
 // passerait sur une copie pendant que l'application diverge ne prouverait rien.
 const START = "// === NEXORA:SYNCMERGE:START ===";
 const END = "// === NEXORA:SYNCMERGE:END ===";
-const EXPORTS = ["NEXORA_MERGEABLE_KEYS", "NEXORA_MERGE_ID_GETTERS", "mergeItemTimestamp", "stampChangedEntities", "mergeKeyedCollections"];
+const EXPORTS = ["NEXORA_MERGEABLE_KEYS", "NEXORA_MERGE_ID_GETTERS", "mergeItemTimestamp", "stampChangedEntities", "mergeKeyedCollections", "isDuplicateActivityEntry", "dedupeActivityLog"];
 
 const html = await readFile(new URL("../.build/index.html", import.meta.url), "utf8");
 const from = html.indexOf(START);
@@ -19,7 +19,7 @@ assert.ok(from !== -1 && to > from, "bloc de fusion introuvable dans .build/inde
 const factory = vm.runInThisContext(
   `(function () {\n${html.slice(from + START.length, to)}\n;return { ${EXPORTS.join(", ")} };\n})`
 );
-const { NEXORA_MERGEABLE_KEYS, mergeItemTimestamp, stampChangedEntities, mergeKeyedCollections } = factory();
+const { NEXORA_MERGEABLE_KEYS, mergeItemTimestamp, stampChangedEntities, mergeKeyedCollections, isDuplicateActivityEntry, dedupeActivityLog } = factory();
 
 // ---------------------------------------------------------------------------
 // Le registre : une clé absente d'ici n'est PAS fusionnée — elle est bloquée.
@@ -188,4 +188,40 @@ test("deux enregistrements dans la même milliseconde ne sont pas départagés",
   );
   assert.deepEqual(merged.merged[0].widgets, ["distant"]);
   assert.equal(merged.unresolved.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Journal d'activité alimenté par deux sessions (#670) : Nexora Futur inscrit
+// ses changements, cet onglet inscrit ceux qu'il reçoit. Jamais deux fois.
+// ---------------------------------------------------------------------------
+
+const act = (id, type, at, patch = {}) => ({ id, type, taskId: "t1", taskTitle: "T", projectId: "p", at, ...patch });
+
+test("isDuplicateActivityEntry : même tâche, type et valeurs à moins de 5 min", () => {
+  const log = [act("f1", "completed", "2026-10-03T10:00:00.000Z"), act("f2", "reassigned", "2026-10-03T10:00:00.000Z", { from: "A", to: "B" })];
+  assert.equal(isDuplicateActivityEntry(act("n1", "completed", "2026-10-03T10:04:00.000Z"), log), true);
+  assert.equal(isDuplicateActivityEntry(act("n2", "completed", "2026-10-03T10:06:00.000Z"), log), false, "au-delà de 5 min");
+  assert.equal(isDuplicateActivityEntry(act("n3", "reassigned", "2026-10-03T10:01:00.000Z", { from: "A", to: "C" }), log), false, "valeurs différentes");
+  assert.equal(isDuplicateActivityEntry(act("n4", "completed", "2026-10-03T10:01:00.000Z", { taskId: "t2" }), log), false, "autre tâche");
+  assert.equal(isDuplicateActivityEntry(act("n5", "completed", "pas une date"), log), false, "sans date, jamais écartée");
+});
+
+test("dedupeActivityLog garde la première occurrence et l'ordre", () => {
+  const list = [act("a", "completed", "2026-10-03T10:00:00.000Z"), act("b", "created", "2026-10-03T09:00:00.000Z"), act("c", "completed", "2026-10-03T10:02:00.000Z"), act("d", "completed", "2026-10-03T11:00:00.000Z")];
+  assert.deepEqual(dedupeActivityLog(list).map((e) => e.id), ["a", "b", "d"]);
+});
+
+test("fusion de nexora:activityLog : l'entrée de Futur déjà enregistrée l'emporte sur le doublon local", () => {
+  const base = [act("old", "created", "2026-10-03T08:00:00.000Z")];
+  const remote = [act("futur", "deadlineChanged", "2026-10-03T10:00:00.000Z", { fromDate: "2026-10-05", toDate: "2026-10-07" }), ...base];
+  const local = [act("local", "deadlineChanged", "2026-10-03T10:00:01.000Z", { fromDate: "2026-10-05", toDate: "2026-10-07" }), ...base];
+  const r = mergeKeyedCollections("nexora:activityLog", local, remote, base);
+  assert.deepEqual(r.merged.map((e) => e.id), ["futur", "old"]);
+  assert.deepEqual(r.unresolved, []);
+});
+
+test("fusion des autres clés : aucun dédoublonnage appliqué", () => {
+  const v = (id) => ({ id, type: "completed", taskId: "t1", at: "2026-10-03T10:00:00.000Z" });
+  const r = mergeKeyedCollections("nexora:momentumSnapshots", [v("x")], [v("y")], []);
+  assert.equal(r.merged.length, 2);
 });

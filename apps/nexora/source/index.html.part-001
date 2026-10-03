@@ -8698,6 +8698,36 @@ export default function LePlan({ currentUser, onSignOut }) {
     });
   };
 
+  // Journal d'activité alimenté par plusieurs sessions (#670). Nexora Futur
+  // journalise ses propres changements de tâches ; cet onglet journalise aussi
+  // ceux qu'il REÇOIT (comparaison avant/après de tasks). Sans garde, une même
+  // modification produirait deux entrées. Une entrée est un doublon d'une
+  // autre si elle porte sur la même tâche, le même type, les mêmes valeurs, à
+  // moins de 5 minutes d'écart. Le contrat de nexora:activityLog ne change pas.
+  const NEXORA_ACTIVITY_DUP_WINDOW_MS = 5 * 60 * 1000;
+  const activityLogSignature = (e) => [e?.taskId, e?.type, e?.from ?? "", e?.to ?? "", e?.fromDate ?? "", e?.toDate ?? ""].join("\u0001");
+  const isDuplicateActivityEntry = (entry, log) => {
+    const sig = activityLogSignature(entry);
+    const at = Date.parse(entry?.at);
+    if (!Number.isFinite(at)) return false;
+    return (Array.isArray(log) ? log : []).some((x) => activityLogSignature(x) === sig && Math.abs(Date.parse(x?.at) - at) < NEXORA_ACTIVITY_DUP_WINDOW_MS);
+  };
+  // Conserve la PREMIÈRE occurrence (ordre du journal : la version distante,
+  // déjà enregistrée, passe devant les ajouts locaux lors d'une fusion).
+  const dedupeActivityLog = (list) => {
+    if (!Array.isArray(list)) return list;
+    const kept = new Map();
+    return list.filter((e) => {
+      const at = Date.parse(e?.at);
+      if (!e || typeof e !== "object" || !Number.isFinite(at)) return true;
+      const sig = activityLogSignature(e);
+      const times = kept.get(sig) || [];
+      if (times.some((t) => Math.abs(t - at) < NEXORA_ACTIVITY_DUP_WINDOW_MS)) return false;
+      times.push(at); kept.set(sig, times);
+      return true;
+    });
+  };
+
   // Fusionne deux collections "indexables" : soit un tableau d'objets
   // identifiables, soit un objet-carte {clé: objet} (ex. nexora:taskBaselines).
   // Retourne null si la forme des deux valeurs ne permet pas une fusion fine
@@ -8772,7 +8802,7 @@ export default function LePlan({ currentUser, onSignOut }) {
         .filter((id) => (seenOrder.has(id) ? false : (seenOrder.add(id), true)))
         .map((id) => mergedMap.get(id))
         .filter((x) => x !== undefined);
-      return { merged, unresolved };
+      return { merged: key === "nexora:activityLog" ? dedupeActivityLog(merged) : merged, unresolved };
     }
 
     const merged = {};
@@ -11447,7 +11477,12 @@ export default function LePlan({ currentUser, onSignOut }) {
       // tâche lit désormais ce journal, 300 entrées le vidait trop vite pour des
       // tâches actives. `persistKey` segmente déjà toute clé volumineuse
       // (chunked-v1) sous la limite Firestore de 1 Mio : rien à ajouter ici.
-      if (entries.length > 0) setActivityLog((log) => [...entries, ...log].slice(0, 2000));
+      // #670 : une entrée déjà inscrite par une autre session (Nexora Futur)
+      // n'est pas réécrite.
+      if (entries.length > 0) setActivityLog((log) => {
+        const fresh = entries.filter((e) => !isDuplicateActivityEntry(e, log));
+        return fresh.length ? [...fresh, ...log].slice(0, 2000) : log;
+      });
     }
     prevTasksForActivityRef.current = tasks;
   }, [tasks, dataLoaded]);
