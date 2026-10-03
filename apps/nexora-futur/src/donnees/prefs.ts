@@ -23,13 +23,14 @@ export interface PrefsFutur {
   synthese: PrefsSynthese; // lentille Synthèse (#658)
   triage: PrefsTriage; // Triage (#661)
   phrase: PrefsPhrase; // Phrase (#679) : vues enregistrées et tuiles épinglées
+  guideVu: boolean; // guide de démarrage déjà montré (#663)
 }
 
 export const FRISE_DEFAUT: PrefsFrise = { reference: "aucune", critique: false, style: "barres" };
 export const DENSITE_DEFAUT: PrefsDensite = { mode: "mois", lignes: "project", colonnes: "status", mesure: "count", vue: "semaine" };
 export const SYNTHESE_DEFAUT: PrefsSynthese = { style: "bar", groupe: "status", pile: "status", jauge: "avgProgress", treemap: "taille" };
 export const TRIAGE_DEFAUT: PrefsTriage = { regles: REGLES_DEFAUT, reports: {} };
-export const PREFS_VIDES: PrefsFutur = { version: 1, espaces: {}, pageProjet: null, frise: FRISE_DEFAUT, tableur: null, densite: DENSITE_DEFAUT, synthese: SYNTHESE_DEFAUT, triage: TRIAGE_DEFAUT, phrase: PHRASE_VIDE };
+export const PREFS_VIDES: PrefsFutur = { version: 1, espaces: {}, pageProjet: null, frise: FRISE_DEFAUT, tableur: null, densite: DENSITE_DEFAUT, synthese: SYNTHESE_DEFAUT, triage: TRIAGE_DEFAUT, phrase: PHRASE_VIDE, guideVu: false };
 const parmi = <T extends string>(v: unknown, liste: readonly T[], defaut: T): T => (typeof v === "string" && (liste as readonly string[]).includes(v) ? (v as T) : defaut);
 
 const chaines = (l: unknown) => (Array.isArray(l) ? l.filter((x): x is string => typeof x === "string") : []);
@@ -55,6 +56,7 @@ export function normaliserPrefs(v: unknown): PrefsFutur {
     tableur: tb && Array.isArray(tb.colonnes) ? { colonnes: chaines(tb.colonnes) } : null,
     triage: (() => { const x = (b.triage && typeof b.triage === "object" ? b.triage : {}) as Record<string, unknown>; return { regles: normaliserRegles(x.regles), reports: nettoyerReports(x.reports, "0000-00-00") }; })(),
     phrase: normaliserPhrase(b.phrase),
+    guideVu: b.guideVu === true,
   };
 }
 
@@ -72,5 +74,6 @@ export function fusionnerPrefs(actuel: unknown, patch: Partial<Omit<PrefsFutur, 
     synthese: patch.synthese ?? n.synthese,
     triage: patch.triage ?? n.triage,
     phrase: patch.phrase ?? n.phrase,
+    guideVu: patch.guideVu ?? n.guideVu,
   };
 }

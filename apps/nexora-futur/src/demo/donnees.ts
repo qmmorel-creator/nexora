@@ -55,6 +55,8 @@ export function donneesDemo(j = aujourdhuiParis()): Record<string, unknown> {
       { id: "th2", name: "Lieu", color: "#2563eb", selectionMode: "single", habits: [{ id: "h5", name: "Bureau", color: "#2C6BE0" }, { id: "h6", name: "Télétravail", color: "#7A5AF8" }] },
     ],
     "nexora:habitSkips": [],
+    // Guide de démarrage déjà vu : le parcours e2e l'ouvre par la palette.
+    "nexora:futurPrefs": { version: 1, guideVu: true },
     "nexora:habitLog": Array.from({ length: 60 }, (_, i) => ({ habitId: ["h1", "h2", "h3"][i % 3], date: J(-Math.floor(i / 2)) })).filter((e, i, a) => a.findIndex((x) => x.habitId === e.habitId && x.date === e.date) === i),
     "nexora:tasks": [
       { id: "t1", title: "Documents FOR-0129", projectId: "p-ctex6", statusId: "s3", taskTypeId: "tt1", start: J(-70), end: J(-44), assignee: "Vincent Bernard", criticality: "urgent", progress: 60, checklist: [{ id: "c1", text: "Plan de contrôle", done: true }, { id: "c2", text: "Notes de calcul", done: false }] },

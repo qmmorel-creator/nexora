@@ -430,6 +430,33 @@ try {
   await page.waitForFunction(() => !JSON.stringify(window.__nexoraDemo.valeur("nexora:metaFilters")?.advanced || {}).includes("isnot"));
   await capture("10h-reglages");
 
+  etape = "guide, capture externe, historique, fiche mémo, export"; console.log("→", etape);
+  await page.keyboard.press("Control+k"); await page.keyboard.type("Guide de démarrage");
+  await page.getByRole("dialog").getByText("Guide de démarrage", { exact: true }).last().click();
+  const guide = page.getByRole("dialog", { name: "Bienvenue dans Nexora Futur" });
+  await guide.waitFor();
+  await guide.getByRole("button", { name: "C'est parti" }).click();
+  await guide.waitFor({ state: "detached" });
+  // Capture externe : même adresse que nexora-project.
+  const dans3 = await page.evaluate(() => { const [a, m, d] = new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()).split("-").map(Number); return new Date(Date.UTC(a, m - 1, d + 3)).toISOString().slice(0, 10); });
+  await page.goto(`http://127.0.0.1:${PORT}/?nexoraCapture=1&title=${encodeURIComponent("Relancer le BET")}&project=ctex6&due=${dans3}&sourceSender=bet%40exemple.invalid`);
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:tasks") || []).some((t) => t.title === "Relancer le BET"));
+  const capt = (await taches()).find((t) => t.title === "Relancer le BET");
+  assert.deepEqual([capt.projectId, capt.end, capt.milestone, capt.sourceSender], ["p-ctex6", dans3, true, "bet@exemple.invalid"]);
+  await page.waitForFunction((id) => new URL(location.href).searchParams.get("t") === id && !location.search.includes("nexoraCapture"), capt.id);
+  // Historique de la tâche (journal d'activité) puis fiche mémo.
+  await page.getByText("Origine : e-mail de bet@exemple.invalid").waitFor();
+  assert.ok(await page.locator(".insp-hist li", { hasText: "créée" }).count(), "historique : création");
+  await page.getByRole("button", { name: "Fiche mémo" }).click();
+  await page.getByRole("article", { name: "Fiche mémo Relancer le BET" }).waitFor();
+  assert.ok(await page.getByRole("button", { name: "Imprimer ou enregistrer en PDF" }).isVisible());
+  // Export CSV des tâches.
+  await page.goto(`http://127.0.0.1:${PORT}/reglages?o=donnees`);
+  const [tele] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Exporter les tâches" }).click()]);
+  assert.match(tele.suggestedFilename(), /^nexora-taches-\d{4}-\d{2}-\d{2}\.csv$/);
+  const csv = (await import("node:fs")).readFileSync(await tele.path(), "utf8");
+  assert.ok(csv.startsWith("\ufeffid;titre;projet") && csv.includes("Demande lame pour piste d'accès"), "CSV des tâches");
+
   etape = "frise : glisser, référence, chemin critique"; console.log("→", etape);
   const J = (n) => page.evaluate((k) => { const [a, m, d] = new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()).split("-").map(Number); return new Date(Date.UTC(a, m - 1, d + k)).toISOString().slice(0, 10); }, n);
   const tache = async (id) => (await taches()).find((t) => t.id === id);
