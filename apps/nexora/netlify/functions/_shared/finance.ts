@@ -52,7 +52,7 @@ export async function getFinanceTransaction(config: { url: string; secretKey: st
 
 export async function applyFinanceTransactionWrite(
   config: { url: string; secretKey: string },
-  operation: "create" | "update",
+  operation: "create" | "update" | "import",
   transaction: Record<string, unknown>,
   idempotencyKey: string
 ) {

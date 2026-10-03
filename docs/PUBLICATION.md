@@ -176,6 +176,7 @@ Intégrations hors production (mode démonstration) :
 | Todoist (fonctions Firebase v2, Cloud Run) | inchangé, hors Netlify | non concerné ; flux Nexora → Todoist toujours supprimé |
 | Ingestion QME, finance (Budget360/KDM) | fonctions Netlify | aucune fonction : aucun secret Supabase exposé |
 | Rapports planifiés matin/soir | `30 18,19 * * *`, `0 5,6 * * *` | aucune fonction déposée : aucun doublon possible, même par appel manuel |
+| Synchronisation bancaire Enable Banking (#677) | `40 4,16 * * *` (UTC), bouton des Réglages | aucune fonction déposée : aucun accès bancaire |
 
 **Ce qui reste à créer pour une recette intégrée** (fonctions, Firebase et MCP réels de
 test) — non fait, car cela crée des ressources permanentes :
