@@ -147,7 +147,7 @@ function Sport({ d, corps }: { d: Donnees; corps: AccesCorps | undefined }) {
   const comp = (a: number, b: number) => (b ? <span className={a >= b ? "ok" : "crit"}>{a >= b ? "+" : "−"}{Math.abs(a - b).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} h</span> : null);
   return (
     <>
-      <p className="discret">Lecture seule : le journal vient de la feuille « Activités Strava », par nexora-project.</p>
+      <p className="discret">Le journal vient de la feuille « Activités Strava », par nexora-project (lecture). Les objectifs se règlent dans Réglages, Objectifs sport.</p>
       <div className="fi-cartes">
         <div className="panneau sy-carte"><Surtitre>Dernière séance</Surtitre>{r.derniere ? <><span className="sy-valeur">{r.derniere.sport}</span><span className="sy-detail">{ilYa(r.ilYaJours || 0)} · {duree(r.derniere.total)}{r.derniere.distance ? ` · ${r.derniere.distance.toLocaleString("fr-FR")} km` : ""}</span></> : <span className="discret">aucune</span>}</div>
         <div className="panneau sy-carte"><Surtitre>Cette semaine</Surtitre><span className="sy-valeur mono">{formaterValeur(r.semaine.hours, "h")}</span><span className="sy-detail">{r.semaine.count} séance{r.semaine.count > 1 ? "s" : ""} · {comp(r.semaine.hours, r.semainePrec.hours)} vs semaine dernière à date</span></div>

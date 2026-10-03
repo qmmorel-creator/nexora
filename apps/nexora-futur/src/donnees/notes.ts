@@ -1,7 +1,7 @@
-// Notes des tableaux de bord (Ref #658) : LECTURE seule de nexora:dashboards et
-// nexora:todayWidgets (écriture au lot 10, décision de Quentin). Texte du widget
+// Notes des tableaux de bord (Ref #658) : lecture de nexora:dashboards et
+// nexora:todayWidgets ; le texte d'une note s'édite depuis le lot 10 (#663). Texte du widget
 // « note » : widget.content, en Markdown (part-003:3785).
-export interface NoteTableau { id: string; titre: string; contenu: string; tableau: string; page: string; }
+export interface NoteTableau { id: string; titre: string; contenu: string; tableau: string; page: string; cle: "tableaux" | "accueil"; modifiable: boolean; }
 
 type Brut = Record<string, unknown>;
 const objets = (v: unknown): Brut[] => (Array.isArray(v) ? v.filter((x): x is Brut => !!x && typeof x === "object") : []);
@@ -10,12 +10,12 @@ const pages = (b: Brut): Brut[] => (Array.isArray(b.pages) ? objets(b.pages) : A
 
 export function notesTableaux(tableaux: unknown, accueil: unknown): NoteTableau[] {
   const out: NoteTableau[] = [];
-  const lire = (nomTableau: string, b: Brut) => pages(b).forEach((p) => objets(p.widgets).forEach((w) => {
+  const lire = (nomTableau: string, b: Brut, cle: NoteTableau["cle"]) => pages(b).forEach((p) => objets(p.widgets).forEach((w) => {
     if (w.type !== "note" || typeof w.content !== "string" || !w.content.trim()) return;
-    out.push({ id: String(w.id ?? `${nomTableau}-${out.length}`), titre: String(w.title || "Note"), contenu: w.content, tableau: nomTableau, page: String(p.name || "") });
+    out.push({ id: String(w.id ?? `${nomTableau}-${out.length}`), titre: String(w.title || "Note"), contenu: w.content, tableau: nomTableau, page: String(p.name || ""), cle, modifiable: w.id !== undefined && w.id !== null && String(w.id) !== "" });
   }));
-  if (accueil && typeof accueil === "object") lire("Aujourd'hui", accueil as Brut);
-  objets(tableaux).forEach((t) => lire(String(t.name || "Tableau de bord"), t));
+  if (accueil && typeof accueil === "object") lire("Aujourd'hui", accueil as Brut, "accueil");
+  objets(tableaux).forEach((t) => lire(String(t.name || "Tableau de bord"), t, "tableaux"));
   return out;
 }
 

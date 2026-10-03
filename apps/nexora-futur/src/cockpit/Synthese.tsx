@@ -8,7 +8,10 @@ import { STYLES_GRAPHIQUE, compterPar, empilees, indicateurs, jauge, niveauCriti
 import { analyserMarkdown, segmentsEnLigne, type Bloc, type NoteTableau } from "../donnees/notes";
 import type { PrefsSynthese } from "../donnees/prefs";
 import { naviguer } from "../navigation/routeur";
-import { Etat, Segment, Surtitre } from "../composants";
+import { Bouton, Etat, Segment, Surtitre } from "../composants";
+import { useDonnees } from "../donnees/magasin";
+import { majContenuNote } from "../donnees/reglages";
+import { useNotifier } from "./Notifications";
 
 interface Props { taches: Tache[]; tachesToutes: Tache[]; cat: Catalogues; aujourdhui: string; references: Baselines; notes: NoteTableau[]; prefs: PrefsSynthese; setPrefs: (p: PrefsSynthese) => void; }
 
@@ -165,10 +168,36 @@ export function Synthese({ taches, tachesToutes, cat, aujourdhui, references, no
         <Treemap taches={taches} cat={cat} aujourdhui={aujourdhui} references={references} mode={prefs.treemap as ModeCouleurTreemap} />
       </section>
       <section className="panneau sy-bloc" aria-label="Notes des tableaux de bord">
-        <div className="sy-tete"><Surtitre>Notes des tableaux de bord</Surtitre><span className="marge-auto discret">lecture seule · modification au lot 10</span></div>
-        {notes.length ? <div className="sy-notes">{notes.map((n) => <article key={n.id} className="sy-note"><header><strong>{n.titre}</strong> <span className="mono discret">{n.tableau}{n.page ? ` · ${n.page}` : ""}</span></header><Blocs blocs={analyserMarkdown(n.contenu)} /></article>)}</div>
+        <div className="sy-tete"><Surtitre>Notes des tableaux de bord</Surtitre><span className="marge-auto discret">partagées avec Nexora actuel</span></div>
+        {notes.length ? <div className="sy-notes">{notes.map((n) => <NoteEditable key={`${n.cle}-${n.id}`} n={n} />)}</div>
           : <p className="discret">Aucune note dans les tableaux de bord.</p>}
       </section>
     </div>
+  );
+}
+
+// Note Markdown d'un tableau de bord : lecture, puis édition en place (#663).
+function NoteEditable({ n }: { n: NoteTableau }) {
+  const { ecrireJson } = useDonnees();
+  const notifier = useNotifier();
+  const [texte, setTexte] = useState<string | null>(null);
+  const enregistrer = () => {
+    if (texte === null) return; const t = texte; setTexte(null);
+    if (t === n.contenu) return;
+    ecrireJson(n.cle, (v) => majContenuNote(v, n.id, t)).then(() => notifier({ message: `Note « ${n.titre} » enregistrée.` }))
+      .catch((e) => notifier({ message: `Note non enregistrée : ${(e as Error).message}`, ton: "crit" }));
+  };
+  return (
+    <article className="sy-note" aria-label={`Note ${n.titre}`}>
+      <header><strong>{n.titre}</strong> <span className="mono discret">{n.tableau}{n.page ? ` · ${n.page}` : ""}</span>
+        {n.modifiable && texte === null && <Bouton variante="discret" className="sy-note-b" onClick={() => setTexte(n.contenu)} aria-label={`Modifier la note ${n.titre}`}>Modifier</Bouton>}</header>
+      {texte === null ? <Blocs blocs={analyserMarkdown(n.contenu)} /> : (
+        <>
+          <textarea className="sy-note-txt" aria-label={`Texte de la note ${n.titre}`} value={texte} autoFocus rows={Math.min(18, Math.max(5, texte.split("\n").length + 1))}
+            onChange={(e) => setTexte(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setTexte(null); } if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) enregistrer(); }} />
+          <div className="sy-note-act"><Bouton variante="principal" onClick={enregistrer}>Enregistrer</Bouton><Bouton variante="discret" onClick={() => setTexte(null)}>Annuler</Bouton><span className="discret">Markdown · Ctrl Entrée</span></div>
+        </>
+      )}
+    </article>
   );
 }
