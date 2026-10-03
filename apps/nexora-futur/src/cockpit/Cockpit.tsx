@@ -363,7 +363,7 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
       <footer className="etat-barre mono" aria-live="polite">
         <span className={enCours ? "" : "ok"}>{enCours ? "● Enregistrement…" : "● Synchronisé"}</span>
         <span>Tâches · rév. {d.etats.taches.lecture?.revision?.slice(0, 8) || "—"}</span>
-        <span>Écriture : tâches, archive, journal, habitudes, préférences, réglages de projet · finances, équipe et devis en lecture seule</span>
+        <span>Écriture : tâches, archive, journal, habitudes, préférences, réglages, équipe et notes · finances, devis, sport et santé en lecture seule</span>
         <span className="marge-auto"><Kbd>⌘K</Kbd> commandes · <Kbd>?</Kbd> raccourcis</span>
       </footer>
       {palette && <Palette key={palette} ouverte modeInitial={palette} onFermer={() => setPalette(null)} cat={d} taches={d.taches} archive={d.archive} aujourdhui={d.aujourdhui} commandes={commandes}

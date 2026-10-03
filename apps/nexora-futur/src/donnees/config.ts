@@ -24,4 +24,8 @@ export const CLES_ECRITURE_OUVERTES: readonly string[] = [
   "nexora:activityLog", "nexora:habitLog", "nexora:habitSkips", "nexora:futurPrefs",
   "nexora:projects", "nexora:projectFolders", "nexora:statuses", "nexora:taskTypes",
   "nexora:taskDefaults", "nexora:taskTemplates", "nexora:favorites", "nexora:habitThemes",
+  // Lot 10 (#663), suite : équipe (membres, équipes, ateliers, charge), méta-filtres,
+  // objectifs sport et notes des tableaux de bord.
+  "nexora:teamMembers", "nexora:teams", "nexora:workshops", "nexora:staffing", "nexora:metaFilters", "nexora:sportGoals",
+  "nexora:dashboards", "nexora:todayWidgets",
 ];

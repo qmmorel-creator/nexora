@@ -7,17 +7,20 @@ import { useDonnees } from "../donnees/magasin";
 import type { Dossier, Projet, Statut, TypeTache } from "../donnees/modele";
 import { estProjetCalendrier } from "../donnees/modele";
 import {
-  COULEURS_REGLAGES, ajouterElement, ajouterHabitude, basculerFavori, majElement, majHabitude, majObjet, nouvelIdReglage, parentsPossibles, retirerElement, usages,
+  COULEURS_REGLAGES, ajouterElement, ajouterHabitude, avecAteliersDepart, basculerFavori, descendants, majElement, majHabitude, majObjet, nouvelIdReglage, parentsPossibles, retirerElement, usages,
 } from "../donnees/reglages";
+import { ATELIERS_DEPART, capacite, equipesDe, normaliserEquipes, type Equipe, type MembreEquipe } from "../donnees/equipe";
+import { metaFiltresParDefaut, type Filtres } from "../donnees/filtres";
 import { copiesSecours, oublierSecours, type CopieSecours } from "../donnees/secours";
 import { Bouton, Cartouche, Segment, Surtitre } from "../composants";
 import { ReglagesApparence } from "../composants/ReglagesApparence";
 import { useNotifier } from "./Notifications";
 
-export type OngletReglages = "apparence" | "projets" | "statuts" | "creation" | "habitudes" | "sauvegarde";
+export type OngletReglages = "apparence" | "projets" | "statuts" | "creation" | "habitudes" | "equipe" | "ateliers" | "filtres" | "sport" | "sauvegarde";
 export const ONGLETS_REGLAGES: { valeur: OngletReglages; libelle: string }[] = [
   { valeur: "apparence", libelle: "Apparence" }, { valeur: "projets", libelle: "Projets et dossiers" }, { valeur: "statuts", libelle: "Statuts et types" },
-  { valeur: "creation", libelle: "Création" }, { valeur: "habitudes", libelle: "Thèmes d'habitudes" }, { valeur: "sauvegarde", libelle: "Sauvegarde" },
+  { valeur: "creation", libelle: "Création" }, { valeur: "habitudes", libelle: "Thèmes d'habitudes" }, { valeur: "equipe", libelle: "Utilisateurs et équipes" },
+  { valeur: "ateliers", libelle: "Ateliers" }, { valeur: "filtres", libelle: "Méta-filtres" }, { valeur: "sport", libelle: "Objectifs sport" }, { valeur: "sauvegarde", libelle: "Sauvegarde" },
 ];
 const CRITICITES: [string, string][] = [["", "—"], ["low", "Faible"], ["normal", "Normale"], ["high", "Haute"], ["urgent", "Urgente"]];
 
@@ -67,6 +70,10 @@ export function PageReglages({ d, onglet, setOnglet }: { d: Donnees; onglet: Ong
           {onglet === "statuts" && <StatutsTypes d={d} ecrire={ecrire} />}
           {onglet === "creation" && <Creation d={d} ecrire={ecrire} />}
           {onglet === "habitudes" && <Habitudes d={d} ecrire={ecrire} />}
+          {onglet === "equipe" && <EquipeReglages d={d} ecrire={ecrire} />}
+          {onglet === "ateliers" && <Ateliers d={d} ecrire={ecrire} />}
+          {onglet === "filtres" && <MetaFiltres d={d} ecrire={ecrire} />}
+          {onglet === "sport" && <ObjectifsSport d={d} ecrire={ecrire} />}
           {onglet === "sauvegarde" && <Sauvegarde />}
         </div>
       </div>
@@ -290,6 +297,141 @@ function Sauvegarde() {
       {!copies.length && <p className="discret">Aucune écriture en attente : tout a été confirmé par Firebase.</p>}
       <Surtitre>Protection des écritures</Surtitre>
       <p className="discret rg-aide">Chaque écriture exige la révision lue. Si une autre session (ou Nexora actuel) a écrit entre-temps, Futur relit et rejoue la seule modification demandée, trois fois au plus, puis renonce sans rien écraser.</p>
+    </Bloc>
+  );
+}
+
+/* ------------------------------------------------- Utilisateurs, équipes */
+function EquipeReglages({ d, ecrire }: { d: Donnees; ecrire: Ecrire }) {
+  const [nom, setNom] = useState(""); const [nomEq, setNomEq] = useState("");
+  const equipes = normaliserEquipes(d.equipesBrutes);
+  const majM = (id: string, patch: Partial<MembreEquipe>) => ecrire("membres", (v) => majElement<MembreEquipe>(v, id, patch));
+  return (
+    <>
+      <Bloc titre="Utilisateurs" aide="Le nom sert de clé aux tâches (responsable) et à la charge du personnel : il ne se renomme pas ici. Capacité : nombre de postes par jour au-delà duquel la charge passe en rouge."
+        actions={<form className="rg-ajout" onSubmit={(e) => { e.preventDefault(); const n = nom.trim(); if (!n || d.membres.some((m) => m.name === n)) return; setNom("");
+          ecrire("membres", (v) => ajouterElement<MembreEquipe>(v, { id: nouvelIdReglage(), name: n, color: COULEURS_REGLAGES[d.membres.length % COULEURS_REGLAGES.length] }), `« ${n} » ajouté.`); }}>
+          <input className="rg-texte" aria-label="Nom du nouvel utilisateur" placeholder="Prénom Nom" value={nom} onChange={(e) => setNom(e.target.value)} /><Bouton type="submit" disabled={!nom.trim()}>Ajouter</Bouton></form>}>
+        <div className="rg-table" role="table" aria-label="Utilisateurs">
+          {d.membresEquipe.map((m) => { const n = d.taches.filter((t) => t.assignee === m.name).length; return (
+            <div key={m.id} className="rg-ligne rg-util" role="row" aria-label={m.name}>
+              <Couleur valeur={m.color} libelle={`Couleur de ${m.name}`} onChange={(c) => majM(m.id, { color: c })} />
+              <span className="rg-fixe">{m.name}{m.inactive && <span className="discret"> · inactif</span>}</span>
+              <select className="rg-select" aria-label={`Équipe de ${m.name}`} value={equipesDe(m)[0] || ""} onChange={(e) => majM(m.id, e.target.value ? { teamIds: [e.target.value, ...equipesDe(m).slice(1).filter((x) => x !== e.target.value)], teamId: e.target.value } : { teamIds: [], teamId: null })}>
+                <option value="">Sans équipe</option>{equipes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+              <label className="rg-bornes">cap.<input type="number" min={1} step={1} className="rg-texte rg-nombre" aria-label={`Capacité de ${m.name}`} defaultValue={capacite(m.capacityPerDay)}
+                onBlur={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x >= 1 && x !== capacite(m.capacityPerDay)) majM(m.id, { capacityPerDay: x }); }} /></label>
+              <label className="rg-bornes"><input type="checkbox" defaultChecked={!m.inactive} key={`a${!!m.inactive}`} onChange={(e) => majM(m.id, { inactive: e.target.checked ? undefined : true })} aria-label={`${m.name} actif`} />actif</label>
+              <Supprimer libelle={m.name} refus={n ? "a des tâches" : d.affectations.some((a) => a.member === m.name) ? "a des affectations" : undefined} onConfirmer={() => ecrire("membres", (v) => retirerElement(v, m.id), `« ${m.name} » retiré.`)} />
+            </div>); })}
+        </div>
+      </Bloc>
+      <Bloc titre="Équipes" aide="Une équipe peut dépendre d'une autre (lien hiérarchique) ; l'organigramme se met à jour."
+        actions={<form className="rg-ajout" onSubmit={(e) => { e.preventDefault(); const n = nomEq.trim(); if (!n) return; setNomEq("");
+          ecrire("equipes", (v) => ajouterElement(v, { id: nouvelIdReglage(), name: n, color: COULEURS_REGLAGES[equipes.length % COULEURS_REGLAGES.length], parentTeamId: "", parentLinkType: "hierarchique" }), `Équipe « ${n} » créée.`); }}>
+          <input className="rg-texte" aria-label="Nom de la nouvelle équipe" placeholder="Nouvelle équipe" value={nomEq} onChange={(e) => setNomEq(e.target.value)} /><Bouton type="submit" disabled={!nomEq.trim()}>Créer</Bouton></form>}>
+        <div className="rg-table" role="table" aria-label="Équipes">
+          {equipes.map((t: Equipe) => { const n = d.membresEquipe.filter((m) => equipesDe(m).includes(t.id)).length; const sous = descendants(equipes.map((x) => ({ id: x.id, parentId: x.parentTeamId || null })), t.id); return (
+            <div key={t.id} className="rg-ligne" role="row" aria-label={t.name}>
+              <Couleur valeur={t.color} libelle={`Couleur de l'équipe ${t.name}`} onChange={(c) => ecrire("equipes", (v) => majElement(v, t.id, { color: c }))} />
+              <Texte valeur={t.name} libelle={`Nom de l'équipe ${t.name}`} onValider={(x) => ecrire("equipes", (v) => majElement(v, t.id, { name: x }))} />
+              <select className="rg-select" aria-label={`Équipe parente de ${t.name}`} value={t.parentTeamId || ""} onChange={(e) => ecrire("equipes", (v) => majElement(v, t.id, { parentTeamId: e.target.value }))}>
+                <option value="">(racine)</option>{equipes.filter((x) => !sous.has(x.id)).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select>
+              <select className="rg-select" aria-label={`Responsable de ${t.name}`} value={t.leadName || ""} onChange={(e) => ecrire("equipes", (v) => majElement(v, t.id, { leadName: e.target.value }))}>
+                <option value="">Sans responsable</option>{d.membres.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}</select>
+              <span className="mono discret">{n}</span>
+              <Supprimer libelle={`l'équipe ${t.name}`} refus={n ? "a des membres" : equipes.some((x) => x.parentTeamId === t.id) ? "a des sous-équipes" : undefined} onConfirmer={() => ecrire("equipes", (v) => retirerElement(v, t.id), `Équipe « ${t.name} » supprimée.`)} />
+            </div>); })}
+          {!equipes.length && <p className="discret">Aucune équipe.</p>}
+        </div>
+      </Bloc>
+    </>
+  );
+}
+
+/* ------------------------------------------------------------- Ateliers */
+function Ateliers({ d, ecrire }: { d: Donnees; ecrire: Ecrire }) {
+  const [nom, setNom] = useState("");
+  const avecDepart = (f: (v: unknown) => unknown) => (v: unknown) => f(avecAteliersDepart(v, ATELIERS_DEPART));
+  return (
+    <Bloc titre="Ateliers" aide="Postes de la charge du personnel (Usine, Bureau, Chantier…). Un atelier utilisé dans une affectation ne peut pas être supprimé."
+      actions={<form className="rg-ajout" onSubmit={(e) => { e.preventDefault(); const n = nom.trim(); if (!n) return; setNom("");
+        ecrire("ateliers", avecDepart((v) => ajouterElement(v, { id: `ws-${nouvelIdReglage()}`, name: n, color: COULEURS_REGLAGES[d.ateliers.length % COULEURS_REGLAGES.length], custom: true })), `Atelier « ${n} » créé.`); }}>
+        <input className="rg-texte" aria-label="Nom du nouvel atelier" placeholder="Nouvel atelier" value={nom} onChange={(e) => setNom(e.target.value)} /><Bouton type="submit" disabled={!nom.trim()}>Créer</Bouton></form>}>
+      <div className="rg-table" role="table" aria-label="Ateliers">
+        {d.ateliers.map((w) => { const n = d.affectations.filter((a) => a.workshops.includes(w.id)).length; return (
+          <div key={w.id} className="rg-ligne" role="row" aria-label={w.name}>
+            <Couleur valeur={w.color} libelle={`Couleur de l'atelier ${w.name}`} onChange={(c) => ecrire("ateliers", avecDepart((v) => majElement(v, w.id, { color: c })))} />
+            <Texte valeur={w.name} libelle={`Nom de l'atelier ${w.name}`} onValider={(x) => ecrire("ateliers", avecDepart((v) => majElement(v, w.id, { name: x })))} />
+            <span /><span className="mono discret">{n} j</span><span />
+            <Supprimer libelle={`l'atelier ${w.name}`} refus={n ? "utilisé" : undefined} onConfirmer={() => ecrire("ateliers", avecDepart((v) => retirerElement(v, w.id)), `Atelier « ${w.name} » supprimé.`)} />
+          </div>); })}
+      </div>
+    </Bloc>
+  );
+}
+
+/* -------------------------------------------------------- Méta-filtres */
+function MetaFiltres({ d, ecrire }: { d: Donnees; ecrire: Ecrire }) {
+  const m = d.metaFiltres;
+  const maj = (patch: Partial<Filtres>) => ecrire("metaFiltres", (v) => ({ ...metaFiltresParDefaut(), ...(v && typeof v === "object" && !Array.isArray(v) ? (v as object) : {}), ...patch }), "Méta-filtres enregistrés.");
+  const lus = (m.advanced.items.find((x) => "field" in x && x.field === "project" && x.mode === "isnot") as { values?: string[] } | undefined)?.values || [];
+  // Affichage immédiat, puis la valeur écrite reprend la main (comme les règles du Triage).
+  const [attente, setAttente] = useState<string[] | null>(null);
+  const exclus = attente ?? lus;
+  const basculerExclu = (id: string) => {
+    const n = exclus.includes(id) ? exclus.filter((x) => x !== id) : [...exclus, id];
+    setAttente(n);
+    const autres = m.advanced.items.filter((x) => !("field" in x && x.field === "project" && x.mode === "isnot"));
+    maj({ advanced: { ...m.advanced, items: n.length ? [...autres, { field: "project", mode: "isnot", values: n }] : autres } }).finally(() => setAttente(null));
+  };
+  const choix = (k: "milestone" | "focus", libelle: string) => (
+    <label className="rg-champ"><span>{libelle}</span>
+      <select className="rg-select" aria-label={libelle} value={m[k]} onChange={(e) => maj({ [k]: e.target.value } as Partial<Filtres>)}>
+        <option value="all">Toutes</option><option value="yes">Seulement</option><option value="no">Exclues</option></select></label>
+  );
+  return (
+    <Bloc titre="Méta-filtres" aide="Filtres permanents appliqués à toutes les vues, dans Futur comme dans Nexora actuel. La barre de requête les signale.">
+      <div className="rg-valeurs">
+        <label className="rg-champ"><span>Terminées</span><select className="rg-select" aria-label="Terminées" value={m.showDone ? "oui" : "non"} onChange={(e) => maj({ showDone: e.target.value === "oui" })}><option value="oui">Visibles</option><option value="non">Masquées</option></select></label>
+        {choix("milestone", "Jalons")}{choix("focus", "Focus")}
+        <label className="rg-champ"><span>Retards seulement</span><input type="checkbox" defaultChecked={m.lateOnly} key={`l${m.lateOnly}`} onChange={(e) => maj({ lateOnly: e.target.checked })} aria-label="Retards seulement" /></label>
+        <label className="rg-champ"><span>Urgentes seulement</span><input type="checkbox" defaultChecked={m.urgentOnly} key={`u${m.urgentOnly}`} onChange={(e) => maj({ urgentOnly: e.target.checked })} aria-label="Urgentes seulement" /></label>
+      </div>
+      <Surtitre>Projets masqués partout</Surtitre>
+      <div className="rg-puces">{d.projets.map((p) => <label key={p.id} className={`rg-puce ${exclus.includes(p.id) ? "on" : ""}`}><input type="checkbox" checked={exclus.includes(p.id)} onChange={() => basculerExclu(p.id)} aria-label={`Masquer ${p.name}`} /><span className="hp-dot" style={{ background: p.color }} />{p.name}</label>)}</div>
+      <p className="discret rg-aide">Les autres conditions avancées déjà posées dans Nexora actuel sont conservées telles quelles ({m.advanced.items.length} condition{m.advanced.items.length > 1 ? "s" : ""} au total).</p>
+      <div><Bouton variante="discret" onClick={() => ecrire("metaFiltres", () => metaFiltresParDefaut(), "Méta-filtres remis à zéro.")}>Remettre à zéro</Bouton></div>
+    </Bloc>
+  );
+}
+
+/* ------------------------------------------------------- Objectifs sport */
+function ObjectifsSport({ d, ecrire }: { d: Donnees; ecrire: Ecrire }) {
+  const o = d.objectifsSport;
+  const [libelle, setLibelle] = useState("");
+  const brut = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+  const annuels = (v: unknown) => (Array.isArray(brut(v).yearlyKm) ? (brut(v).yearlyKm as { id: string }[]) : []);
+  return (
+    <Bloc titre="Objectifs sport" aide="Heures par semaine et kilomètres par an (par groupe de sports) ; l'onglet Sport de Corps montre l'avancement.">
+      <label className="rg-champ" style={{ maxWidth: 220 }}><span>Heures par semaine</span>
+        <input type="number" min={0} step={0.5} className="rg-texte" aria-label="Heures par semaine" defaultValue={o.weeklyHours ?? ""}
+          onBlur={(e) => { const x = e.target.value === "" ? null : Number(e.target.value); if (x !== o.weeklyHours && (x === null || Number.isFinite(x))) ecrire("objectifsSport", (v) => ({ ...brut(v), weeklyHours: x }), "Objectif hebdomadaire enregistré."); }} /></label>
+      <Surtitre>Kilomètres par an</Surtitre>
+      {o.yearlyKm.map((g) => (
+        <div key={g.id} className="rg-ligne" role="row" aria-label={g.label || g.id}>
+          <span />
+          <Texte valeur={g.label || ""} libelle={`Libellé de l'objectif ${g.label}`} onValider={(x) => ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: majElement(annuels(v), g.id, { label: x }) }))} />
+          <span className="discret">{g.sports.length ? g.sports.join(" + ") : "Tous les sports"}</span>
+          <label className="rg-bornes">km<input type="number" min={0} className="rg-texte rg-nombre" aria-label={`Kilomètres de ${g.label}`} defaultValue={g.km ?? ""}
+            onBlur={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x !== g.km) ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: majElement(annuels(v), g.id, { km: x }) })); }} /></label>
+          <span />
+          <Supprimer libelle={`l'objectif ${g.label}`} onConfirmer={() => ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: retirerElement(annuels(v), g.id) }))} />
+        </div>
+      ))}
+      <form className="rg-ajout" onSubmit={(e) => { e.preventDefault(); const n = libelle.trim(); if (!n) return; setLibelle("");
+        ecrire("objectifsSport", (v) => ({ ...brut(v), yearlyKm: ajouterElement(annuels(v), { id: nouvelIdReglage(), label: n, sports: [], km: 1000 }) }), `Objectif « ${n} » créé.`); }}>
+        <input className="rg-texte" aria-label="Libellé du nouvel objectif annuel" placeholder="Nouvel objectif (ex. Vélo)" value={libelle} onChange={(e) => setLibelle(e.target.value)} /><Bouton type="submit" disabled={!libelle.trim()}>Créer</Bouton></form>
     </Bloc>
   );
 }

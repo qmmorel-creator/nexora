@@ -250,6 +250,12 @@ try {
   await grilleEq.waitFor();
   assert.ok(await grilleEq.getByText("Karim (intérim)").count(), "personne hors annuaire affichée");
   assert.ok(await grilleEq.locator(".eq-case.pleine").count() > 10, "affectations peintes");
+  // Saisie d'une affectation (#663) : case de Maïa Sonnier aujourd'hui, atelier Formation.
+  const ajd = await page.evaluate(() => new Intl.DateTimeFormat("fr-CA", { timeZone: "Europe/Paris" }).format(new Date()));
+  await grilleEq.getByRole("button", { name: `Maïa Sonnier, ${ajd}` }).click();
+  await page.getByRole("menu", { name: `Ateliers de Maïa Sonnier le ${ajd}` }).getByRole("menuitemcheckbox", { name: /Formation/ }).click();
+  await page.waitForFunction((j) => (window.__nexoraDemo.valeur("nexora:staffing") || []).some((e) => e.member === "Maïa Sonnier" && e.date === j && e.workshops.includes("ws-formation")), ajd);
+  await page.keyboard.press("Escape");
   await rubrique("Organigramme");
   await page.getByRole("region", { name: "Organigramme" }).getByText("lien transverse avec Travaux").waitFor();
   await page.getByRole("button", { name: /Maïa Sonnier/ }).first().click();
@@ -407,6 +413,21 @@ try {
   await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:habitThemes") || []).some((t) => (t.habits || []).some((h) => h.name === "Gainage")));
   await sante.getByLabel("Saisie de Gainage").selectOption("numeric");
   await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:habitThemes") || []).flatMap((t) => t.habits || []).find((h) => h.name === "Gainage")?.kind === "numeric");
+  // Utilisateurs, ateliers, méta-filtres.
+  await page.goto(`http://127.0.0.1:${PORT}/reglages?o=equipe`);
+  const blocUtil = page.getByRole("region", { name: "Utilisateurs" });
+  await blocUtil.getByLabel("Nom du nouvel utilisateur").fill("Inès Durand"); await blocUtil.getByRole("button", { name: "Ajouter" }).click();
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:teamMembers") || []).some((m) => m.name === "Inès Durand"));
+  await blocUtil.getByLabel("Équipe de Inès Durand").selectOption({ label: "Travaux" });
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:teamMembers") || []).find((m) => m.name === "Inès Durand")?.teamIds?.[0] === "eq1");
+  await page.goto(`http://127.0.0.1:${PORT}/reglages?o=ateliers`);
+  await page.getByLabel("Nom du nouvel atelier").fill("Peinture"); await page.getByRole("region", { name: "Ateliers" }).getByRole("button", { name: "Créer" }).click();
+  await page.waitForFunction(() => (window.__nexoraDemo.valeur("nexora:workshops") || []).some((w) => w.name === "Peinture"));
+  await page.goto(`http://127.0.0.1:${PORT}/reglages?o=filtres`);
+  await page.getByLabel("Masquer Communication").check();
+  await page.waitForFunction(() => JSON.stringify(window.__nexoraDemo.valeur("nexora:metaFilters")?.advanced || {}).includes("isnot"));
+  await page.getByRole("button", { name: "Remettre à zéro" }).click();
+  await page.waitForFunction(() => !JSON.stringify(window.__nexoraDemo.valeur("nexora:metaFilters")?.advanced || {}).includes("isnot"));
   await capture("10h-reglages");
 
   etape = "frise : glisser, référence, chemin critique"; console.log("→", etape);
@@ -518,6 +539,12 @@ try {
   const notes = page.getByRole("region", { name: "Notes des tableaux de bord" });
   await notes.getByText("Consignes de la semaine").waitFor();
   assert.equal(await notes.getByRole("link", { name: "le plan" }).getAttribute("href"), "https://example.invalid/plan");
+  // Note éditable (#663).
+  await page.getByRole("button", { name: "Modifier la note Consignes de la semaine" }).click();
+  const txt = page.getByLabel("Texte de la note Consignes de la semaine");
+  await txt.fill("## Priorités\n- [x] Visite DREAL préparée");
+  await page.getByRole("article", { name: "Note Consignes de la semaine" }).getByRole("button", { name: "Enregistrer" }).click();
+  await page.waitForFunction(() => JSON.stringify(window.__nexoraDemo.valeur("nexora:dashboards") || []).includes("Visite DREAL préparée"));
   await capture("17-synthese");
   await page.getByRole("listitem", { name: /^CTEX6 : / }).click();
   await page.waitForFunction(() => location.pathname === "/projets/p-ctex6");

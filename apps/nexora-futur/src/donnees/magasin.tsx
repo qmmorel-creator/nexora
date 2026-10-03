@@ -56,7 +56,8 @@ export type Mutation = (taches: Tache[], archive: Tache[], cat: Catalogues) => {
 
 // Clés JSON modifiables hors tâches (Ref #669).
 export type CleJson = "journalHabitudes" | "nonApplicables" | "prefs"
-  | "projets" | "dossiers" | "statuts" | "types" | "defauts" | "modeles" | "favoris" | "themesHabitudes"; // #663
+  | "projets" | "dossiers" | "statuts" | "types" | "defauts" | "modeles" | "favoris" | "themesHabitudes" // #663
+  | "membres" | "equipes" | "ateliers" | "affectations" | "metaFiltres" | "objectifsSport" | "tableaux" | "accueil";
 export interface BilanMutation { journal?: string; }
 
 interface Contexte {

@@ -67,3 +67,32 @@ export function ajouterHabitude(v: unknown, themeId: string, h: AvecId & Record<
 }
 
 export const COULEURS_REGLAGES = ["#2C6BE0", "#4F46E5", "#7A5AF8", "#EC4899", "#E5484D", "#F2A93B", "#22B07D", "#0EA5E9", "#14B8A6", "#7A8290"];
+
+// Ateliers : un catalogue vide se lit comme les ateliers de départ ; on les
+// écrit donc avec le premier ajout (même règle que normalizeWorkshops).
+export function avecAteliersDepart(v: unknown, depart: AvecId[]): AvecId[] {
+  return Array.isArray(v) && v.some((x) => x && typeof x === "object" && (x as AvecId).id) ? (v as AvecId[]) : depart.map((w) => ({ ...w }));
+}
+// Charge du personnel : une case = membre|date ; un atelier se coche ou se
+// décoche ; une case vide n'est pas stockée (normalizeStaffingEntries).
+export function basculerAffectation(v: unknown, member: string, date: string, atelier: string) {
+  const id = `${member}|${date}`;
+  const l = liste<{ id: string; member: string; date: string; workshops: string[] }>(v);
+  const e = l.find((x) => x?.id === id || (x?.member === member && x?.date === date));
+  if (!e) return [...l, { id, member, date, workshops: [atelier] }];
+  const ws = Array.isArray(e.workshops) ? e.workshops : [];
+  const n = ws.includes(atelier) ? ws.filter((w) => w !== atelier) : [...ws, atelier];
+  return n.length ? l.map((x) => (x === e ? { ...x, id, workshops: n } : x)) : l.filter((x) => x !== e);
+}
+// Notes : widget.content dans nexora:dashboards (tableau de tableaux) ou
+// nexora:todayWidgets (un tableau), pages ou ancienne liste à plat.
+export function majContenuNote(v: unknown, widgetId: string, contenu: string): unknown {
+  const widgets = (l: unknown) => liste<Record<string, unknown>>(l).map((w) => (w && String(w.id) === widgetId && w.type === "note" ? { ...w, content: contenu } : w));
+  const tableau = (b: unknown) => {
+    if (!b || typeof b !== "object") return b; const o = b as Record<string, unknown>;
+    if (Array.isArray(o.pages)) return { ...o, pages: o.pages.map((p) => (p && typeof p === "object" ? { ...(p as object), widgets: widgets((p as Record<string, unknown>).widgets) } : p)) };
+    if (Array.isArray(o.widgets)) return { ...o, widgets: widgets(o.widgets) };
+    return o;
+  };
+  return Array.isArray(v) ? v.map(tableau) : tableau(v);
+}

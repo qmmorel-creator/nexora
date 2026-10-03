@@ -57,8 +57,8 @@ export function Bande({ actif, d, budget }: { actif: Espace; d: Donnees; budget:
 export function NavEspace({ espace }: { espace: Espace }) {
   const LOTS: Record<string, [string, string][]> = {
     finances: [["Synthèse, période libre", "disponible"], ["À catégoriser, transactions", "disponible"], ["Patrimoine", "disponible"], ["Graphiques budget, cumul, flux", "disponible"], ["Devis, factures, Finance PRO", "lecture seule"]],
-    corps: [["Le pixel du jour, heat map", "disponible"], ["Sport, objectifs, calendrier", "lecture seule"], ["Santé, santé × sport", "lecture seule"], ["Photos avant / après", "comparaison"]],
-    equipe: [["Charge par personne", "disponible"], ["Charge du personnel", "lecture seule"], ["Organigramme, fiche personne", "lecture seule"]],
+    corps: [["Le pixel du jour, heat map", "disponible"], ["Sport, objectifs, calendrier", "objectifs modifiables"], ["Santé, santé × sport", "lecture seule"], ["Photos avant / après", "comparaison"]],
+    equipe: [["Charge par personne", "disponible"], ["Charge du personnel", "saisie"], ["Organigramme, fiche personne", "disponible"]],
   };
   return (
     <nav className="nav" aria-label={`Navigation ${espace}`}>

@@ -2,7 +2,7 @@
 // (affectations par jour), organigramme et fiche personne. LECTURE SEULE
 // (décision de Quentin, 2026-10-03) : affectations, ateliers, équipes et
 // fiches se modifient dans nexora-project.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Donnees } from "../donnees/magasin";
 import { estEnRetard, estTerminee } from "../donnees/modele";
 import { chargeParPersonne } from "../donnees/projet";
@@ -13,6 +13,10 @@ import {
 import { naviguer } from "../navigation/routeur";
 import { Bouton, Cartouche, Etat, Segment, Surtitre } from "../composants";
 import { initiales } from "./Lignes";
+import { useDonnees } from "../donnees/magasin";
+import { ATELIERS_DEPART } from "../donnees/equipe";
+import { avecAteliersDepart, basculerAffectation } from "../donnees/reglages";
+import { useNotifier } from "./Notifications";
 
 type Onglet = "charge" | "personnel" | "organigramme";
 
@@ -71,6 +75,24 @@ function ChargePersonnel({ d, ouvrir }: { d: Donnees; ouvrir: (n: string) => voi
   const index = useMemo(() => tachesActives(d.taches, d.statuts), [d.taches, d.statuts]);
   const totaux = totauxAteliers(cases, personnes, jours);
   const taille = plage === "month" ? 26 : plage === "twoWeeks" ? 44 : 84;
+  // Saisie des affectations (#663) : un clic ouvre les ateliers de la case.
+  const { ecrireJson } = useDonnees();
+  const notifier = useNotifier();
+  const [ouverte, setOuverte] = useState<{ nom: string; iso: string } | null>(null);
+  useEffect(() => {
+    if (!ouverte) return;
+    const fermer = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest?.(".eq-menu, .eq-case")) setOuverte(null); };
+    const echap = (e: KeyboardEvent) => { if (e.key === "Escape") setOuverte(null); };
+    document.addEventListener("mousedown", fermer); document.addEventListener("keydown", echap);
+    return () => { document.removeEventListener("mousedown", fermer); document.removeEventListener("keydown", echap); };
+  }, [ouverte]);
+  const basculer = (nom: string, iso: string, atelier: string) => {
+    // Le catalogue vide se lit comme les ateliers de départ : on l'écrit au premier usage.
+    const brut = (() => { try { return JSON.parse(d.etats.ateliers.lecture?.texte || "null"); } catch { return null; } })();
+    const ecrireAteliers = Array.isArray(brut) && brut.length ? Promise.resolve() : ecrireJson("ateliers", (v) => avecAteliersDepart(v, ATELIERS_DEPART));
+    ecrireAteliers.then(() => ecrireJson("affectations", (v) => basculerAffectation(v, nom, iso, atelier)))
+      .catch((e) => notifier({ message: `Affectation non enregistrée : ${(e as Error).message}`, ton: "crit" }));
+  };
   const libelle = plage === "month" ? new Date(`${f.start}T12:00:00Z`).toLocaleDateString("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }) : `${f.start.slice(8, 10)}/${f.start.slice(5, 7)} – ${f.end.slice(8, 10)}/${f.end.slice(5, 7)}`;
   return (
     <section className="panneau sy-bloc" aria-label="Charge du personnel">
@@ -84,7 +106,7 @@ function ChargePersonnel({ d, ouvrir }: { d: Donnees; ouvrir: (n: string) => voi
         <label className="eq-opt"><input type="checkbox" checked={weekEnds} onChange={(e) => setWeekEnds(e.target.checked)} /> Week-ends</label>
         <label className="eq-opt"><input type="checkbox" checked={taches} onChange={(e) => setTaches(e.target.checked)} /> Tâches du jour</label>
       </div>
-      <p className="discret">Lecture seule : les affectations se posent dans nexora-project (widget Charge personnel).</p>
+      <p className="discret">Clic sur une case pour poser ou retirer un atelier (partagé avec Nexora actuel).</p>
       <div className="eq-defile">
         <table className="eq-grille" style={{ ["--case" as string]: `${taille}px` }} aria-label="Affectations par personne et par jour">
           <thead><tr><th className="eq-pers">Personne</th>{jours.map((j) => <th key={j.iso} className={`${j.weekend ? "we" : ""} ${j.today ? "auj" : ""}`} title={j.iso}><span className="mono">{JOURS_COURTS[j.dow]}</span><b className="mono">{j.num}</b></th>)}<th className="eq-postes">Postes</th></tr></thead>
@@ -100,10 +122,18 @@ function ChargePersonnel({ d, ouvrir }: { d: Donnees; ouvrir: (n: string) => voi
                     const lib = r?.single ? (taille >= 62 ? r.single.name : taille >= 22 ? codeAtelier(r.single.name) : "") : "";
                     return (
                       <td key={j.iso} className={`${j.weekend ? "we" : ""} ${j.today ? "auj" : ""}`}>
-                        <span className={`eq-case ${r ? "pleine" : ""} ${depasse && (ids.length || t.length) ? "depasse" : ""}`} style={{ background: r?.background }}
+                        <button type="button" className={`eq-case ${r ? "pleine" : ""} ${depasse && (ids.length || t.length) ? "depasse" : ""}`} style={{ background: r?.background }}
+                          aria-haspopup="menu" aria-expanded={ouverte?.nom === nom && ouverte.iso === j.iso} aria-label={`${nom}, ${j.iso}`}
+                          onClick={() => setOuverte(ouverte?.nom === nom && ouverte.iso === j.iso ? null : { nom, iso: j.iso })}
                           title={`${nom}, ${j.iso} : ${r ? r.shops.map((w) => w.name).join(", ") : "aucun poste"}${t.length ? ` · ${t.length} tâche${t.length > 1 ? "s" : ""} active${t.length > 1 ? "s" : ""}` : ""}${depasse ? ` · au-delà de la capacité (${cap})` : ""}`}>
                           {lib}{taches && t.length > 0 && <i className="eq-nt mono">{t.length}</i>}
-                        </span>
+                        </button>
+                        {ouverte?.nom === nom && ouverte.iso === j.iso && (
+                          <span className="eq-menu" role="menu" aria-label={`Ateliers de ${nom} le ${j.iso}`}>
+                            {d.ateliers.map((w) => <button key={w.id} type="button" role="menuitemcheckbox" aria-checked={ids.includes(w.id)} onClick={() => basculer(nom, j.iso, w.id)}>
+                              <span className="hp-dot" style={{ background: w.color }} />{w.name}{ids.includes(w.id) && <b aria-hidden="true">✓</b>}</button>)}
+                          </span>
+                        )}
                       </td>
                     );
                   })}
@@ -145,7 +175,7 @@ function Organigramme({ d, ouvrir }: { d: Donnees; ouvrir: (n: string) => void }
   if (!racines.length) return <p className="discret">Aucune équipe ni personne dans l'annuaire.</p>;
   return (
     <section className="panneau sy-bloc og" aria-label="Organigramme">
-      <p className="discret">Lecture seule. Le plan Métro, ses dispositions et l'édition des équipes restent dans nexora-project.</p>
+      <p className="discret">Les équipes, leurs responsables et les utilisateurs se modifient dans Réglages, Utilisateurs et équipes.</p>
       <div className="og-defile"><ul className="og-arbre">{racines.map(rendre)}</ul></div>
     </section>
   );
