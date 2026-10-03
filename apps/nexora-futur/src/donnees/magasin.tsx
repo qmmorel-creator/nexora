@@ -9,12 +9,14 @@ import { aujourdhuiParis, type Catalogues, type Dossier, type Membre, type Proje
 import { horodater } from "./operations";
 import { metaFiltresParDefaut, normaliserFiltres, type Filtres } from "./filtres";
 import type { EntreeHabitude, ThemeHabitudes } from "./journee";
+import type { Activite, Depense } from "./projet";
 
 export const CLES = {
   projets: "nexora:projects", dossiers: "nexora:projectFolders", statuts: "nexora:statuses", types: "nexora:taskTypes",
   membres: "nexora:teamMembers", taches: "nexora:tasks", archive: "nexora:taskArchive", favoris: "nexora:favorites",
   metaFiltres: "nexora:metaFilters", defauts: "nexora:taskDefaults", modeles: "nexora:taskTemplates", raccourcis: "nexora:shortcutPrefs",
   themesHabitudes: "nexora:habitThemes", journalHabitudes: "nexora:habitLog",
+  depenses: "nexora:expenses", journal: "nexora:activityLog", equipes: "nexora:teams",
 } as const;
 type NomCle = keyof typeof CLES;
 
@@ -27,6 +29,7 @@ export interface Donnees extends Catalogues {
   dossiers: Dossier[]; taches: Tache[]; archive: Tache[]; favoris: Favori[]; metaFiltres: Filtres;
   defauts: Defauts; modeles: Modele[]; raccourcis: Record<string, string>;
   themesHabitudes: ThemeHabitudes[]; journalHabitudes: EntreeHabitude[];
+  depenses: Depense[]; journal: Activite[]; equipes: { id: string; name?: string; color?: string }[];
   etats: Record<NomCle, EtatCle>; charge: boolean; aujourdhui: string;
 }
 
@@ -92,6 +95,8 @@ export function FournisseurDonnees({ children, source }: { children: ReactNode; 
       raccourcis: parse<Record<string, string>>(etats.raccourcis, CLES.raccourcis, {}),
       themesHabitudes: parse<ThemeHabitudes[]>(etats.themesHabitudes, CLES.themesHabitudes, []),
       journalHabitudes: parse<EntreeHabitude[]>(etats.journalHabitudes, CLES.journalHabitudes, []),
+      depenses: parse<Depense[]>(etats.depenses, CLES.depenses, []), journal: parse<Activite[]>(etats.journal, CLES.journal, []),
+      equipes: parse<{ id: string; name?: string; color?: string }[]>(etats.equipes, CLES.equipes, []),
       etats, charge: etats.taches.charge && etats.projets.charge && etats.statuts.charge && etats.types.charge, aujourdhui: jour,
     };
   }, [etats, jour]);

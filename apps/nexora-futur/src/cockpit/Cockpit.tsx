@@ -20,16 +20,18 @@ import { Inspecteur } from "./Inspecteur";
 import { Palette, type Commande } from "./Palette";
 import { useNotifier } from "./Notifications";
 import { FilDuJour } from "./FilDuJour";
+import { PageProjet } from "./PageProjet";
+import { Bande, ESPACES, NavEspace, PageCorps, PageEquipe, PageFinances, allerEspace, memoriser, useRapportDuJour, type Espace } from "./Espaces";
 import { aCaser, type ModeJour } from "../donnees/journee";
 import { archiverTache, basculer, creer, dupliquerTache, modifier, remettre, restaurerTache, retirer, statutCyclique } from "./actions";
 
-type Lentille = "liste" | "colonnes";
+type Lentille = "page" | "liste" | "colonnes";
 const ecrit = (el: EventTarget | null) => el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
 const AIDE: [string, string][] = [
   ["⌘K · Ctrl+K · /", "Palette : créer, chercher, aller à, commandes"], ["C · N · Ctrl+Alt+N", "Nouvelle tâche (saisie rapide)"],
   ["J · ↓ / K · ↑", "Tâche suivante / précédente"], ["↵", "Ouvrir la fiche"], ["Échap", "Fermer la fiche ou la palette"],
-  ["E", "Terminer / rouvrir"], ["S", "Statut suivant"], ["F", "Focus oui / non"], ["D", "Modifier la date de fin"], ["A", "Changer le responsable"],
+  ["g puis j · c · f · s · e", "Espace : Fil du jour, Chantiers, Finances, Corps, Équipe"], ["3", "Page du projet"], ["E", "Terminer / rouvrir"], ["S", "Statut suivant"], ["F", "Focus oui / non"], ["D", "Modifier la date de fin"], ["A", "Changer le responsable"],
   ["X · Suppr", "Archiver (annulable)"], ["1 · 2", "Lentille Liste / Colonnes"], ["?", "Cette aide"],
 ];
 
@@ -47,32 +49,41 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   const [selection, setSelection] = useState<string | undefined>();
   const zone = useRef<HTMLDivElement>(null);
 
-  const vue = route.segments[0] === "projets" ? "projet" : route.segments[0] === "archive" ? "archive" : route.segments[0] === "taches" ? "toutes" : "fil";
+  const s0 = route.segments[0];
+  const vue = s0 === "projets" ? "projet" : s0 === "archive" ? "archive" : s0 === "taches" ? "toutes" : s0 === "finances" || s0 === "corps" || s0 === "equipe" ? s0 : "fil";
+  const espace: Espace = vue === "fil" || vue === "finances" || vue === "corps" || vue === "equipe" ? vue : "chantiers";
+  const sansRequete = espace !== "chantiers";
   const modeFil = (["matin", "journee", "soir", "semaine"] as const).find((m) => m === route.params.get("m")) ?? null;
   const projetFixe = vue === "projet" ? route.segments[1] : undefined;
   const projet = d.projets.find((p) => p.id === projetFixe);
-  const lentille: Lentille = route.params.get("v") === "colonnes" ? "colonnes" : "liste";
+  const lentilleDefaut: Lentille = vue === "projet" ? "page" : "liste";
+  const vParam = route.params.get("v");
+  const lentille: Lentille = vParam === "colonnes" ? "colonnes" : vParam === "liste" ? "liste" : vParam === "page" && vue === "projet" ? "page" : lentilleDefaut;
   const ouverte = route.params.get("t") || undefined;
   const r = useMemo(() => depuisParams(route.params), [route.params]);
-  const base = vue === "projet" ? `/projets/${encodeURIComponent(projetFixe || "")}` : vue === "archive" ? "/archive" : vue === "toutes" ? "/taches" : "/";
+  const base = vue === "projet" ? `/projets/${encodeURIComponent(projetFixe || "")}` : vue === "archive" ? "/archive" : vue === "toutes" ? "/taches" : vue === "fil" ? "/" : `/${vue}`;
 
   const majAdresse = useCallback((modif: { r?: Requete; v?: Lentille; t?: string | null; m?: ModeJour }, empiler = false) => {
-    const p = vue === "fil" ? new URLSearchParams() : versParams(modif.r ?? r);
+    const p = sansRequete ? new URLSearchParams() : versParams(modif.r ?? r);
     const m = modif.m ?? modeFil; if (vue === "fil" && m) p.set("m", m);
-    const v = modif.v ?? lentille; if (v !== "liste") p.set("v", v);
+    const v = modif.v ?? lentille; if (!sansRequete && v !== lentilleDefaut) p.set("v", v);
     const t = modif.t === undefined ? ouverte : modif.t; if (t) p.set("t", t);
     naviguer(base, p, !empiler);
-  }, [r, lentille, ouverte, base, vue, modeFil]);
+  }, [r, lentille, lentilleDefaut, ouverte, base, vue, modeFil, sansRequete]);
 
   const ctx: Contexte = useMemo(() => ({ projets: d.projets, statuts: d.statuts, types: d.types, aujourdhui: d.aujourdhui }), [d.projets, d.statuts, d.types, d.aujourdhui]);
   const filtres = useMemo(() => versFiltres(projetFixe ? { ...r, projets: [projetFixe] } : r), [r, projetFixe]);
-  const visibles = useMemo(() => (vue === "archive" || vue === "fil" ? [] : d.taches.filter((t) => correspond(t, d.metaFiltres, ctx) && correspond(t, filtres, ctx))), [vue, d.taches, d.metaFiltres, filtres, ctx]);
+  const visibles = useMemo(() => (vue === "archive" || sansRequete ? [] : d.taches.filter((t) => correspond(t, d.metaFiltres, ctx) && correspond(t, filtres, ctx))), [vue, sansRequete, d.taches, d.metaFiltres, filtres, ctx]);
   const paquets = useMemo(() => {
     const p = grouper(trier(visibles, r.tri, d), lentille === "colonnes" && r.groupe === "aucun" ? "status" : r.groupe, d);
     return r.groupe === "status" ? ouvertesDabord(p, d) : p;
   }, [visibles, r.tri, r.groupe, lentille, d]);
   const ordre = useMemo(() => (vue === "fil" ? aCaser(d.taches, d.aujourdhui, d).map((t) => t.id) : paquets.flatMap((p) => p.taches.map((t) => t.id))), [vue, paquets, d]);
   const tacheOuverte = d.taches.find((t) => t.id === ouverte);
+  const rapportDuJour = useRapportDuJour(source, d.aujourdhui);
+  // Chaque espace mémorise sa dernière adresse (préférence locale).
+  useEffect(() => { memoriser(espace, location.pathname + location.search); }, [espace, route.chemin, route.params]);
+  const accord = useRef(0);
 
   // Exécution avec retour visible et « Annuler ».
   const agir = useCallback(async (m: Mutation, message?: string, inverse?: () => Mutation) => {
@@ -151,6 +162,13 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
       if (paletteRef.current || ecrit(e.target)) { if (e.key === "Escape" && ecrit(e.target) && !paletteRef.current) (e.target as HTMLElement).blur(); return; }
       if (aide) { if (e.key === "Escape" || e.key === "?") setAide(false); return; }
       if (mod || e.altKey) return;
+      // Accords « g » + lettre : changer d'espace.
+      if (accord.current && Date.now() - accord.current < 1200) {
+        accord.current = 0;
+        const cible = ESPACES.find((x) => x.touche === e.key.toLowerCase());
+        if (cible) { e.preventDefault(); allerEspace(cible.id); return; }
+      }
+      if (e.key === "g") { accord.current = Date.now(); return; }
       const sel = selection && ordre.includes(selection) ? selection : undefined;
       const bouger = (n: number) => { e.preventDefault(); const i = sel ? ordre.indexOf(sel) : -1; const k = Math.max(0, Math.min(ordre.length - 1, i + n)); if (ordre[k]) { setSelection(ordre[k]); if (ouverte) majAdresse({ t: ordre[k] }); } };
       switch (e.key) {
@@ -166,8 +184,9 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
         case "d": if (sel) focusChamp(sel, "i-fin"); break;
         case "a": if (sel) focusChamp(sel, "i-resp"); break;
         case "x": case "Delete": if (sel) actionArchiver(sel); break;
-        case "1": if (vue === "fil") naviguer("/taches"); else majAdresse({ v: "liste" }); break;
-        case "2": if (vue === "fil") naviguer("/taches", new URLSearchParams("v=colonnes")); else majAdresse({ v: "colonnes" }); break;
+        case "1": if (sansRequete) naviguer("/taches"); else majAdresse({ v: "liste" }); break;
+        case "2": if (sansRequete) naviguer("/taches", new URLSearchParams("v=colonnes")); else majAdresse({ v: "colonnes" }); break;
+        case "3": if (vue === "projet") majAdresse({ v: "page" }); break;
         case "?": setAide(true); break;
       }
     };
@@ -177,6 +196,10 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
 
   useEffect(() => { if (selection) zone.current?.querySelector(`[data-id="${CSS.escape(selection)}"]`)?.scrollIntoView({ block: "nearest" }); }, [selection]);
 
+  const segmentLentilles = (
+    <Segment etiquette="Lentille" valeur={lentille} onChange={(v) => majAdresse({ v })}
+      options={[...(vue === "projet" ? [{ valeur: "page" as Lentille, libelle: "Page", raccourci: "3" }] : []), { valeur: "liste" as Lentille, libelle: "Liste", raccourci: "1" }, { valeur: "colonnes" as Lentille, libelle: "Colonnes", raccourci: "2" }]} />
+  );
   const retards = visibles.filter((t) => estEnRetard(t, d.statuts, d.aujourdhui)).length;
   const titre = vue === "projet" ? projet?.name || "Projet introuvable" : vue === "archive" ? "Archive" : r.retard ? "En retard" : r.focus === "yes" ? "Focus" : "Toutes les tâches";
   const erreurs = Object.entries(d.etats).filter(([, e]) => e.erreur).map(([k, e]) => `${k} : ${e.erreur}`);
@@ -185,20 +208,25 @@ export function Cockpit({ utilisateur }: { utilisateur: Pick<User, "email"> }) {
   return (
     <div className="cockpit">
       <header className="entete">
-        <span className="logo" aria-hidden="true">N</span>
         <strong className="entete-titre">Nexora Futur</strong>
         <button type="button" className="commande-barre" onClick={() => setPalette("tout")}>Rechercher, créer, aller à…<Kbd>⌘K</Kbd></button>
         <span className="marge-auto" />
         <Bouton variante="principal" raccourci="C" onClick={() => setPalette("creer")}>Nouvelle tâche</Bouton>
         <span className="discret mono entete-compte">{utilisateur.email}</span>
       </header>
-      <Navigation projetActif={projetFixe} vue={vue === "toutes" && !r.retard && r.focus === "all" ? "toutes" : vue} />
+      <Bande actif={espace} d={d} budget={rapportDuJour} />
+      {espace === "fil" || espace === "chantiers" ? <Navigation projetActif={projetFixe} vue={vue === "toutes" && !r.retard && r.focus === "all" ? "toutes" : vue} /> : <NavEspace espace={espace} />}
       <main className="zone quadrillage" ref={zone}>
-        {vue === "fil" ? <FilDuJour d={d} source={source} mode={modeFil} setMode={(m) => majAdresse({ m })} selection={selection} onOuvrir={ouvrir} onPatch={actionPatch} onBasculer={actionBasculer} /> : <>
+        {vue === "fil" ? <FilDuJour d={d} source={source} mode={modeFil} setMode={(m) => majAdresse({ m })} selection={selection} onOuvrir={ouvrir} onPatch={actionPatch} onBasculer={actionBasculer} />
+        : vue === "equipe" ? <PageEquipe d={d} />
+        : vue === "corps" ? <PageCorps d={d} />
+        : vue === "finances" ? <PageFinances rapport={rapportDuJour} />
+        : vue === "projet" && lentille === "page" && projet ? <PageProjet d={d} projet={projet} selection={selection} onOuvrir={ouvrir} onBasculer={actionBasculer} lentilles={segmentLentilles} />
+        : <>
         <div className="zone-tete">
           <Cartouche surtitre={vue === "projet" ? "Projet" : vue === "archive" ? "Tâches archivées · purge après 30 jours" : "Cockpit"} titre={titre}
             meta={vue === "archive" ? <span>{d.archive.length} tâches</span> : <><span>{visibles.length} tâches</span><span className={retards ? "crit" : ""}>{retards} en retard</span><span>{d.charge ? "à jour" : "lecture…"}</span></>}
-            actions={vue !== "archive" ? <Segment etiquette="Lentille" valeur={lentille} onChange={(v) => majAdresse({ v })} options={[{ valeur: "liste", libelle: "Liste", raccourci: "1" }, { valeur: "colonnes", libelle: "Colonnes", raccourci: "2" }]} /> : undefined} />
+            actions={vue !== "archive" ? segmentLentilles : undefined} />
           {vue !== "archive" && <BarreRequete r={r} setR={(x) => majAdresse({ r: x })} cat={d} membres={membres} metaActifs={compterMeta(d.metaFiltres)} projetFixe={projetFixe} />}
         </div>
         {erreurs.length > 0 && <p role="alert" className="zone-alerte"><Etat ton="crit">Lecture Firebase en échec</Etat> {erreurs.join(" · ")}</p>}

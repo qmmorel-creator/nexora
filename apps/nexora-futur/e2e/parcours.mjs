@@ -108,7 +108,7 @@ try {
   await page.getByRole("complementary", { name: /Fiche : Visite DREAL/ }).waitFor();
 
   etape = "lien profond et Précédent"; console.log("→", etape);
-  await page.goto(`http://127.0.0.1:${PORT}/projets/p-lot2b?retard=1`);
+  await page.goto(`http://127.0.0.1:${PORT}/projets/p-lot2b?v=liste&retard=1`);
   await page.getByRole("heading", { name: "Lot 2B" }).waitFor();
   const lignes = await page.locator(".ligne").allTextContents();
   assert.equal(lignes.length, 1); assert.match(lignes[0], /Demande lame/);
@@ -146,6 +146,34 @@ try {
   assert.equal(await page.locator(".fil-sjour").count(), 7);
   await capture("7-fil-semaine");
 
+  etape = "page projet"; console.log("→", etape);
+  await page.goto(`http://127.0.0.1:${PORT}/projets/p-ctex6`);
+  await page.getByRole("region", { name: "Budget du projet" }).waitFor();
+  assert.match(await page.getByRole("region", { name: "Budget du projet" }).textContent(), /62 %/);
+  assert.match(await page.getByRole("region", { name: "Risques de retard" }).textContent(), /bloquée/);
+  await capture("8-page-projet");
+  await page.getByRole("button", { name: "Personnaliser" }).click();
+  await page.getByRole("group", { name: "Sections de la page projet" }).getByLabel("Journal du projet").uncheck();
+  assert.equal(await page.getByRole("region", { name: "Journal du projet" }).count(), 0, "section masquée");
+  await page.keyboard.press("Escape"); // rend le focus : les raccourcis sont ignorés dans un champ
+  await page.keyboard.press("1"); await page.waitForTimeout(100);
+  assert.match(page.url(), /v=liste/);
+  await page.keyboard.press("3"); await page.waitForTimeout(100);
+  assert.doesNotMatch(page.url(), /v=/);
+
+  etape = "espaces et mémoire"; console.log("→", etape);
+  await page.keyboard.press("g"); await page.keyboard.press("e");
+  await page.getByRole("table", { name: "Charge par personne" }).waitFor();
+  assert.match(page.url(), /\/equipe$/);
+  await capture("9-espace-equipe");
+  await page.keyboard.press("g"); await page.keyboard.press("s");
+  await page.getByRole("region", { name: "Grille des habitudes" }).waitFor();
+  await page.keyboard.press("g"); await page.keyboard.press("f");
+  await page.getByText("Reste à dépenser").waitFor();
+  await page.keyboard.press("g"); await page.keyboard.press("c");
+  await page.waitForTimeout(150);
+  assert.match(page.url(), /\/projets\/p-ctex6$/, "Chantiers revient à la dernière adresse");
+
   etape = "mode sombre"; console.log("→", etape);
   await page.goto(`http://127.0.0.1:${PORT}/projets/p-ctex6?t=t2`);
   await page.getByRole("complementary", { name: /Fiche : PV Contrôles DREAL/ }).waitFor();
@@ -155,7 +183,7 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.dataset.mode), "sombre");
 
   assert.deepEqual(erreurs, [], "aucune erreur de console");
-  console.log("Parcours e2e : OK (10 étapes)");
+  console.log(`Parcours e2e : OK (${(await import("node:fs")).readFileSync(new URL(import.meta.url), "utf8").match(/^  etape = "/gm).length} étapes)`);
 } catch (e) {
   console.error(`Parcours e2e en échec à l'étape « ${etape} » :`, e.message, erreurs);
   process.exitCode = 1;
