@@ -261,6 +261,9 @@ export const PATH_RULES = [
   [/^apps\/nexora\/(netlify|lib|tests|supabase)\//, null],
   [/^apps\/nexora\/(openapi\.yaml|public\/openapi\.yaml|tsconfig\.json|netlify\.toml|[^/]+\.md)$/, null],
   [/^apps\/nexora-mcp\//, null],
+  // Nexora Futur (#652) : app distincte, couverte par ses propres tests
+  // (`npm test --prefix apps/nexora-futur`), hors du banc de l'interface actuelle.
+  [/^apps\/nexora-futur\//, null],
   [/^tools\/visual-check\/(affected|scope)(\.test)?\.mjs$/, { scenarios: [], tests: ["selection"] }],
   [/^tools\/visual-check\/carte-engine\.test\.mjs$/, { scenarios: [], tests: ["carte-engine"] }],
   [/^tools\/visual-check\/(premium|impact)-fixture\.mjs$/, { scenarios: ["2d"] }],
